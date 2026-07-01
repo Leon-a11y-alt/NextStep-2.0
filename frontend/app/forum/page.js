@@ -1,0 +1,199 @@
+"use client";
+import React, { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import AppShell from "@/components/AppShell";
+import Card from "@/components/Card";
+import Button from "@/components/Button";
+import Modal from "@/components/Modal";
+import PostCard from "@/components/PostCard";
+import ApiErrorBanner from "@/components/ApiErrorBanner";
+import { useAuth } from "@/lib/auth";
+import { PostsAPI, HabitsAPI, CommentsAPI } from "@/lib/api";
+import { PlusIcon, SearchIcon } from "@/lib/icons";
+
+const CATEGORIES = [
+  "All", "Study habits", "Exam preparation", "Time management",
+  "Internship rejection", "Scholarship application", "Portfolio building",
+  "Programming practice", "Project teamwork", "CCA or leadership", "Academic setback recovery",
+];
+
+export default function ForumPage() {
+  const { user } = useAuth();
+  const router = useRouter();
+
+  const [posts, setPosts] = useState([]);
+  const [category, setCategory] = useState("All");
+  const [search, setSearch] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  // Create-post modal state
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState({ title: "", category: "Study habits", content: "", suggestedAction: "" });
+
+  // Comment modal state
+  const [commentPost, setCommentPost] = useState(null);
+  const [comments, setComments] = useState([]);
+  const [commentText, setCommentText] = useState("");
+
+  async function load() {
+    setError("");
+    try {
+      const data = await PostsAPI.list(category, search);
+      setPosts(data);
+    } catch (err) { setError(err.message); }
+  }
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [category]);
+
+  function flash(msg) { setNotice(msg); setTimeout(() => setNotice(""), 2500); }
+
+  async function handleUpvote(post) {
+    try {
+      const updated = await PostsAPI.upvote(post.id);
+      setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    } catch (err) { setError(err.message); }
+  }
+
+  // The signature action: forum advice -> personal habit.
+  async function handleAddToTracker(post) {
+    try {
+      await HabitsAPI.create({
+        userId: user.id,
+        name: post.suggestedAction || post.title,
+        frequency: "Daily",
+        sourcePostId: post.id,
+      });
+      flash(`Added to your tracker: "${post.suggestedAction || post.title}"`);
+    } catch (err) { setError(err.message); }
+  }
+
+  async function handleCreate(e) {
+    e.preventDefault();
+    try {
+      await PostsAPI.create({
+        ...form,
+        author: user.name,
+        authorYear: user.yearLevel,
+        userId: user.id,
+      });
+      setShowCreate(false);
+      setForm({ title: "", category: "Study habits", content: "", suggestedAction: "" });
+      flash("Your advice was posted!");
+      load();
+    } catch (err) { setError(err.message); }
+  }
+
+  async function openComments(post) {
+    setCommentPost(post);
+    setComments([]);
+    try { setComments(await CommentsAPI.list(post.id)); } catch (err) { setError(err.message); }
+  }
+
+  async function addComment(e) {
+    e.preventDefault();
+    if (!commentText.trim()) return;
+    try {
+      const c = await CommentsAPI.create({
+        postId: commentPost.id, userId: user.id, author: user.name,
+        authorYear: user.yearLevel, text: commentText,
+      });
+      setComments((prev) => [...prev, c]);
+      setCommentText("");
+    } catch (err) { setError(err.message); }
+  }
+
+  return (
+    <AppShell
+      title="Advice Forum"
+      subtitle="Real tips from RP students. Save what works and turn it into a habit."
+      actions={<Button variant="primary" onClick={() => setShowCreate(true)}><PlusIcon size={16} /> Create post</Button>}
+    >
+      <ApiErrorBanner error={error} onRetry={load} />
+      {notice && <div className="banner mb-16" style={{ background: "var(--green-050)", color: "var(--green)", borderColor: "rgba(16,185,129,0.3)" }}>{notice}</div>}
+
+      {/* Search + category filter */}
+      <Card className="mb-24">
+        <div className="row gap-12 mb-16" style={{ position: "relative" }}>
+          <span style={{ position: "absolute", left: 14, top: 11, color: "var(--muted)" }}><SearchIcon size={18} /></span>
+          <input
+            className="input"
+            style={{ paddingLeft: 40 }}
+            placeholder="Search advice by keyword…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && load()}
+          />
+          <Button onClick={load}>Search</Button>
+        </div>
+        <div className="chip-row">
+          {CATEGORIES.map((c) => (
+            <button key={c} className={"filter-chip" + (category === c ? " active" : "")} onClick={() => setCategory(c)}>{c}</button>
+          ))}
+        </div>
+      </Card>
+
+      {/* Post list */}
+      <div className="stack gap-16">
+        {posts.length === 0 && <div className="empty">No posts found. Try another category or be the first to post!</div>}
+        {posts.map((post) => (
+          <PostCard
+            key={post.id}
+            post={post}
+            onUpvote={handleUpvote}
+            onAddToTracker={handleAddToTracker}
+            onComment={openComments}
+          />
+        ))}
+      </div>
+
+      {/* Create-post modal */}
+      <Modal open={showCreate} title="Share your advice" onClose={() => setShowCreate(false)}>
+        <form onSubmit={handleCreate}>
+          <div className="field-group">
+            <label className="field">Title</label>
+            <input className="input" required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. How I stopped procrastinating" />
+          </div>
+          <div className="field-group">
+            <label className="field">Category</label>
+            <select className="select" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+              {CATEGORIES.filter((c) => c !== "All").map((c) => <option key={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="field-group">
+            <label className="field">Your advice</label>
+            <textarea className="textarea" required value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} placeholder="Share what worked for you…" />
+          </div>
+          <div className="field-group">
+            <label className="field">Suggested action <span className="muted">(becomes a habit when someone taps “Add to My Tracker”)</span></label>
+            <input className="input" value={form.suggestedAction} onChange={(e) => setForm({ ...form, suggestedAction: e.target.value })} placeholder="e.g. Study one topic every day" />
+          </div>
+          <div className="small muted mb-16">Posting as <strong>{user?.name}</strong> ({user?.yearLevel})</div>
+          <Button variant="primary" className="btn-block" type="submit">Post advice</Button>
+        </form>
+      </Modal>
+
+      {/* Comments modal */}
+      <Modal open={!!commentPost} title="Comments" onClose={() => setCommentPost(null)}>
+        {commentPost && (
+          <>
+            <div className="small muted mb-16">On: <strong>{commentPost.title}</strong></div>
+            <div className="stack gap-12 mb-16" style={{ maxHeight: 260, overflowY: "auto" }}>
+              {comments.length === 0 && <p className="muted small">No comments yet. Start the conversation!</p>}
+              {comments.map((c) => (
+                <div key={c.id} style={{ padding: "10px 12px", background: "var(--surface-2)", borderRadius: 10 }}>
+                  <div className="small" style={{ fontWeight: 700 }}>{c.author} <span className="muted" style={{ fontWeight: 400 }}>&middot; {c.authorYear}</span></div>
+                  <div className="small mt-8">{c.text}</div>
+                </div>
+              ))}
+            </div>
+            <form onSubmit={addComment} className="row gap-8">
+              <input className="input" placeholder="Add a comment…" value={commentText} onChange={(e) => setCommentText(e.target.value)} />
+              <Button variant="primary" type="submit">Send</Button>
+            </form>
+          </>
+        )}
+      </Modal>
+    </AppShell>
+  );
+}
