@@ -2,7 +2,6 @@
 import React from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { LogoutIcon } from "@/lib/icons";
 import Logo from "@/components/Logo";
 
 // Initials for the avatar circle, e.g. "Alex Tan" -> "AT".
@@ -11,7 +10,7 @@ function initials(name = "") {
 }
 
 export default function Navbar() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
 
   return (
     <header className="navbar">
@@ -27,10 +26,8 @@ export default function Navbar() {
               <div>{user.yearLevel} &middot; {user.role === "admin" ? "Admin" : "User"}</div>
             </div>
           </div>
+          {/* Log out moved into Settings and Privacy (sidebar). */}
           <div className="avatar">{initials(user.name)}</div>
-          <button className="btn btn-sm btn-ghost" onClick={logout} title="Log out">
-            <LogoutIcon size={16} /> Logout
-          </button>
         </div>
       ) : (
         <div className="row gap-8">

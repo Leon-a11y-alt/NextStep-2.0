@@ -64,3 +64,21 @@ export const ArrowRightIcon = (p) => (
 export const ChatIcon = (p) => (
   <svg {...base(p.size)}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" /></svg>
 );
+export const PlayIcon = (p) => (
+  <svg {...base(p.size)}><path d="M6 4l14 8-14 8Z" /></svg>
+);
+export const PauseIcon = (p) => (
+  <svg {...base(p.size)}><path d="M8 5v14M16 5v14" /></svg>
+);
+export const SparkIcon = (p) => (
+  <svg {...base(p.size)}><path d="M12 2l1.9 5.8L20 9.7l-5 3.9 1.7 6.1L12 16l-4.7 3.7L9 13.6l-5-3.9 6.1-1.9Z" /></svg>
+);
+export const ChevronDownIcon = (p) => (
+  <svg {...base(p.size)}><path d="M6 9l6 6 6-6" /></svg>
+);
+export const SettingsIcon = (p) => (
+  <svg {...base(p.size)}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z" /></svg>
+);
+export const ExternalIcon = (p) => (
+  <svg {...base(p.size)}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6" /><path d="M10 14 21 3" /></svg>
+);

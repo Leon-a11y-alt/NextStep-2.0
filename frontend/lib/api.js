@@ -64,6 +64,31 @@ export const CalendarAPI = {
   remove: (id) => api.del(`/api/calendar/${id}`),
 };
 
+// ---- New features (UI is built — backend endpoints to be implemented) ----
+// These define the API contract each backend owner implements.
+// See TEAM_HANDOFF.md at the repo root for expected behaviour + schema.
+
+// Study Plans: a plan (module) contains lessons; progress = completed/total.
+export const PlansAPI = {
+  list: (userId) => api.get(`/api/plans?userId=${userId}`),
+  create: (payload) => api.post("/api/plans", payload),            // { userId, name, module }
+  remove: (id) => api.del(`/api/plans/${id}`),
+  addLesson: (planId, payload) => api.post(`/api/plans/${planId}/lessons`, payload), // { title }
+  toggleLesson: (planId, lessonId, completed) =>
+    api.put(`/api/plans/${planId}/lessons/${lessonId}`, { completed }),
+};
+
+// Focus sessions: the timer logs every finished session.
+export const FocusAPI = {
+  list: (userId) => api.get(`/api/focus-sessions?userId=${userId}`),
+  create: (payload) => api.post("/api/focus-sessions", payload),   // { userId, habitId, habitName, minutes, date }
+};
+
+// AI study help: backend proxies the n8n webhook (Cisco NetAcad lookup) and caches results.
+export const HelpAPI = {
+  recommend: (query) => api.post("/api/help/recommend", { query }),
+};
+
 export const AdminAPI = {
   pendingPosts: () => api.get("/api/admin/pending-posts"),
   approvePost: (id) => api.put(`/api/admin/posts/${id}/approve`),

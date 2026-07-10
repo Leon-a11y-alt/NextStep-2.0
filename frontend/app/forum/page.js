@@ -36,6 +36,11 @@ export default function ForumPage() {
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
 
+  // Add-to-tracker modal state: the user rewrites the advice in their own
+  // words (customisation) before it becomes a habit.
+  const [trackerPost, setTrackerPost] = useState(null);
+  const [trackerForm, setTrackerForm] = useState({ name: "", frequency: "Daily" });
+
   async function load() {
     setError("");
     try {
@@ -55,16 +60,24 @@ export default function ForumPage() {
     } catch (err) { setError(err.message); }
   }
 
-  // The signature action: forum advice -> personal habit.
-  async function handleAddToTracker(post) {
+  // The signature action: forum advice -> personal habit. Opens a modal so
+  // the user can rewrite the senior's advice in their own words first.
+  function handleAddToTracker(post) {
+    setTrackerPost(post);
+    setTrackerForm({ name: post.suggestedAction || post.title, frequency: "Daily" });
+  }
+
+  async function confirmAddToTracker(e) {
+    e.preventDefault();
     try {
       await HabitsAPI.create({
         userId: user.id,
-        name: post.suggestedAction || post.title,
-        frequency: "Daily",
-        sourcePostId: post.id,
+        name: trackerForm.name,
+        frequency: trackerForm.frequency,
+        sourcePostId: trackerPost.id,
       });
-      flash(`Added to your tracker: "${post.suggestedAction || post.title}"`);
+      flash(`Added to your tracker: "${trackerForm.name}"`);
+      setTrackerPost(null);
     } catch (err) { setError(err.message); }
   }
 
@@ -171,6 +184,36 @@ export default function ForumPage() {
           <div className="small muted mb-16">Posting as <strong>{user?.name}</strong> ({user?.yearLevel})</div>
           <Button variant="primary" className="btn-block" type="submit">Post advice</Button>
         </form>
+      </Modal>
+
+      {/* Add-to-tracker modal (customise the advice before saving) */}
+      <Modal open={!!trackerPost} title="Add to My Tracker" onClose={() => setTrackerPost(null)}>
+        {trackerPost && (
+          <form onSubmit={confirmAddToTracker}>
+            <div className="small muted mb-16" style={{ padding: "10px 12px", background: "var(--surface-2)", borderRadius: 10, borderLeft: "3px solid var(--violet)" }}>
+              <strong>{trackerPost.author}</strong> ({trackerPost.authorYear}) suggested:<br />
+              &ldquo;{trackerPost.suggestedAction || trackerPost.title}&rdquo;
+            </div>
+            <div className="field-group">
+              <label className="field">Make it yours <span className="muted">(rewrite it the way you&rsquo;ll actually do it)</span></label>
+              <textarea
+                className="textarea"
+                required
+                rows={3}
+                value={trackerForm.name}
+                onChange={(e) => setTrackerForm({ ...trackerForm, name: e.target.value })}
+                placeholder="e.g. Try 2 papers from this website for my Operating Systems"
+              />
+            </div>
+            <div className="field-group">
+              <label className="field">Frequency</label>
+              <select className="select" value={trackerForm.frequency} onChange={(e) => setTrackerForm({ ...trackerForm, frequency: e.target.value })}>
+                {["Daily", "Weekdays", "Weekly", "3x per week", "Monthly"].map((f) => <option key={f}>{f}</option>)}
+              </select>
+            </div>
+            <Button variant="primary" className="btn-block" type="submit">Add to my tracker</Button>
+          </form>
+        )}
       </Modal>
 
       {/* Comments modal */}
