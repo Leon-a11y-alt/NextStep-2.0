@@ -23,7 +23,7 @@ export const api = {
   get: (path) => request(path),
   post: (path, body) => request(path, { method: "POST", body: JSON.stringify(body) }),
   put: (path, body) => request(path, { method: "PUT", body: JSON.stringify(body || {}) }),
-  del: (path) => request(path, { method: "DELETE" }),
+  del: (path, body) => request(path, { method: "DELETE", body: JSON.stringify(body || {}) }),
   baseUrl: API_URL,
 };
 
@@ -34,20 +34,25 @@ export const AuthAPI = {
 };
 
 export const PostsAPI = {
-  list: (category, search) => {
+  list: (category, search, userId) => {
     const params = new URLSearchParams();
     if (category && category !== "All") params.set("category", category);
     if (search) params.set("search", search);
+    if (userId) params.set("userId", String(userId));
     const q = params.toString();
     return api.get(`/api/posts${q ? "?" + q : ""}`);
   },
   create: (payload) => api.post("/api/posts", payload),
-  upvote: (id) => api.post(`/api/posts/${id}/upvote`, {}),
+  update: (id, payload) => api.put(`/api/posts/${id}`, payload),
+  remove: (id, userId, role) => api.del(`/api/posts/${id}`, { userId, role }),
+  upvote: (id, userId) => api.post(`/api/posts/${id}/upvote`, { userId }),
 };
 
 export const CommentsAPI = {
   list: (postId) => api.get(`/api/comments?postId=${postId}`),
   create: (payload) => api.post("/api/comments", payload),
+  update: (id, payload) => api.put(`/api/comments/${id}`, payload),
+  remove: (id, userId) => api.del(`/api/comments/${id}`, { userId }),
 };
 
 export const HabitsAPI = {

@@ -4,8 +4,8 @@ const postsRepo = require("../repositories/posts.repo");
 // GET /api/posts?category=&search=
 // Returns approved posts, with optional category + search filtering.
 async function getPosts(req, res) {
-  const { category, search } = req.query;
-  const result = await postsRepo.findApproved({ category, search });
+  const { category, search, userId } = req.query;
+  const result = await postsRepo.findApproved({ category, search, userId });
   res.json(result);
 }
 
@@ -46,6 +46,12 @@ async function updatePost(req, res) {
   const existing = await postsRepo.findById(id);
   if (!existing) return res.status(404).json({ error: "Post not found." });
 
+  const requesterId = req.body?.userId ?? req.query?.userId;
+  const requesterRole = req.body?.role ?? req.query?.role;
+  if (requesterRole !== "admin" && existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
+    return res.status(403).json({ error: "You can only edit your own posts." });
+  }
+
   const { title, category, content, suggestedAction } = req.body;
   const updated = await postsRepo.update(id, { title, category, content, suggestedAction });
   res.json(updated);
@@ -53,8 +59,22 @@ async function updatePost(req, res) {
 
 // DELETE /api/posts/:id
 async function deletePost(req, res) {
-  const removed = await postsRepo.remove(Number(req.params.id));
-  if (!removed) return res.status(404).json({ error: "Post not found." });
+  const id = Number(req.params.id);
+  const existing = await postsRepo.findById(id);
+  if (!existing) return res.status(404).json({ error: "Post not found." });
+
+  const requesterId = req.body?.userId ?? req.query?.userId;
+  const requesterRole = req.body?.role ?? req.query?.role;
+  if (requesterRole === "admin") {
+    const removed = await postsRepo.remove(id);
+    return res.json({ message: "Post deleted.", post: removed });
+  }
+
+  if (existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
+    return res.status(403).json({ error: "You can only delete your own posts." });
+  }
+
+  const removed = await postsRepo.remove(id);
   res.json({ message: "Post deleted.", post: removed });
 }
 
@@ -63,7 +83,14 @@ async function upvotePost(req, res) {
   const id = Number(req.params.id);
   const existing = await postsRepo.findById(id);
   if (!existing) return res.status(404).json({ error: "Post not found." });
-  const updated = await postsRepo.incrementUpvotes(id);
+
+  const userId = req.body?.userId ?? req.query?.userId;
+  if (userId === undefined || userId === null || userId === "") {
+    return res.status(400).json({ error: "userId is required." });
+  }
+
+  const updated = await postsRepo.toggleUpvote(id, Number(userId));
+  if (!updated) return res.status(404).json({ error: "Post not found." });
   res.json(updated);
 }
 
