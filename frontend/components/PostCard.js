@@ -7,11 +7,11 @@ import { UpIcon, ChatIcon, PlusIcon } from "@/lib/icons";
 
 // Reddit-style advice post card with upvote column, category, author year,
 // the suggested action, and an "Add to My Tracker" button.
-export default function PostCard({ post, onUpvote, onAddToTracker, onComment }) {
+export default function PostCard({ post, onUpvote, onAddToTracker, onComment, canEdit, onEdit, canDelete, onDelete, isUpvoted }) {
   return (
     <Card hover className="post-card">
       <div className="vote-col">
-        <button className="vote-btn" onClick={() => onUpvote && onUpvote(post)} title="Upvote">
+        <button className="vote-btn" onClick={() => onUpvote && onUpvote(post)} title={isUpvoted ? "Remove upvote" : "Upvote"} style={{ color: isUpvoted ? "var(--primary)" : undefined }}>
           <UpIcon size={18} />
         </button>
         <span className="vote-count">{post.upvotes}</span>
@@ -42,6 +42,16 @@ export default function PostCard({ post, onUpvote, onAddToTracker, onComment }) 
           <Button size="sm" variant="ghost" onClick={() => onComment && onComment(post)}>
             <ChatIcon size={15} /> Comment
           </Button>
+          {canEdit && (
+            <Button size="sm" variant="ghost" onClick={() => onEdit && onEdit(post)}>
+              Edit
+            </Button>
+          )}
+          {canDelete && (
+            <Button size="sm" variant="danger" onClick={() => onDelete && onDelete(post)}>
+              Delete
+            </Button>
+          )}
         </div>
       </div>
     </Card>

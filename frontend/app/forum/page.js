@@ -39,6 +39,10 @@ export default function ForumPage() {
   const [commentPost, setCommentPost] = useState(null);
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
+  const [editingPost, setEditingPost] = useState(null);
+  const [editPostForm, setEditPostForm] = useState({ title: "", content: "", category: "Study habits", suggestedAction: "" });
+  const [editingComment, setEditingComment] = useState(null);
+  const [editCommentText, setEditCommentText] = useState("");
 
   // Add-to-tracker modal state: the user rewrites the advice in their own
   // words (customisation) before it becomes a habit.
@@ -48,7 +52,7 @@ export default function ForumPage() {
   async function load() {
     setError("");
     try {
-      const data = await PostsAPI.list(category, search);
+      const data = await PostsAPI.list(category, search, user?.id);
       setPosts(data);
       // Admins moderate right here on the forum: pending posts load alongside.
       if (user?.role === "admin") setPending(await AdminAPI.pendingPosts());
@@ -70,8 +74,13 @@ export default function ForumPage() {
   }
 
   async function handleUpvote(post) {
+    if (!user?.id) {
+      setError("Please log in to upvote posts.");
+      return;
+    }
+
     try {
-      const updated = await PostsAPI.upvote(post.id);
+      const updated = await PostsAPI.upvote(post.id, user.id);
       setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
     } catch (err) { setError(err.message); }
   }
@@ -129,6 +138,72 @@ export default function ForumPage() {
       });
       setComments((prev) => [...prev, c]);
       setCommentText("");
+    } catch (err) { setError(err.message); }
+  }
+
+  function handleEditPost(post) {
+    setEditingPost(post);
+    setEditPostForm({
+      title: post.title || "",
+      content: post.content || "",
+      category: post.category || "Study habits",
+      suggestedAction: post.suggestedAction || "",
+    });
+  }
+
+  async function saveEditedPost(e) {
+    e.preventDefault();
+    try {
+      const updated = await PostsAPI.update(editingPost.id, {
+        ...editPostForm,
+        userId: user?.id,
+        role: user?.role,
+      });
+      setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      setEditingPost(null);
+      flash("Your post was updated.");
+    } catch (err) { setError(err.message); }
+  }
+
+  async function handleDeletePost(post) {
+    const confirmed = window.confirm(`Delete this post?\n\n"${post.title}"`);
+    if (!confirmed) return;
+
+    try {
+      await PostsAPI.remove(post.id, user?.id, user?.role);
+      setPosts((prev) => prev.filter((p) => p.id !== post.id));
+      flash("Your post was deleted.");
+    } catch (err) { setError(err.message); }
+  }
+
+  function handleEditComment(comment) {
+    setEditingComment(comment);
+    setEditCommentText(comment.text || "");
+  }
+
+  async function saveEditedComment(e) {
+    e.preventDefault();
+    try {
+      const updated = await CommentsAPI.update(editingComment.id, {
+        text: editCommentText,
+        userId: user?.id,
+        role: user?.role,
+      });
+      setComments((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      setEditingComment(null);
+      setEditCommentText("");
+      flash("Your comment was updated.");
+    } catch (err) { setError(err.message); }
+  }
+
+  async function handleDeleteComment(comment) {
+    const confirmed = window.confirm("Delete this comment?");
+    if (!confirmed) return;
+
+    try {
+      await CommentsAPI.remove(comment.id, user?.id);
+      setComments((prev) => prev.filter((c) => c.id !== comment.id));
+      flash("Your comment was deleted.");
     } catch (err) { setError(err.message); }
   }
 
@@ -201,6 +276,11 @@ export default function ForumPage() {
             onUpvote={handleUpvote}
             onAddToTracker={handleAddToTracker}
             onComment={openComments}
+            canEdit={Boolean(user?.id && (user?.role === "admin" || (post.userId && Number(post.userId) === Number(user.id))))}
+            onEdit={handleEditPost}
+            canDelete={Boolean(user?.id && (user?.role === "admin" || (post.userId && Number(post.userId) === Number(user.id))))}
+            onDelete={handleDeletePost}
+            isUpvoted={Boolean(user?.id && post.upvotedByUser)}
           />
         ))}
       </div>
@@ -261,6 +341,33 @@ export default function ForumPage() {
         )}
       </Modal>
 
+      {/* Edit post modal */}
+      <Modal open={!!editingPost} title="Edit post" onClose={() => setEditingPost(null)}>
+        {editingPost && (
+          <form onSubmit={saveEditedPost}>
+            <div className="field-group">
+              <label className="field">Title</label>
+              <input className="input" required value={editPostForm.title} onChange={(e) => setEditPostForm({ ...editPostForm, title: e.target.value })} />
+            </div>
+            <div className="field-group">
+              <label className="field">Category</label>
+              <select className="select" value={editPostForm.category} onChange={(e) => setEditPostForm({ ...editPostForm, category: e.target.value })}>
+                {CATEGORIES.filter((c) => c !== "All").map((c) => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="field-group">
+              <label className="field">Your advice</label>
+              <textarea className="textarea" required rows={5} value={editPostForm.content} onChange={(e) => setEditPostForm({ ...editPostForm, content: e.target.value })} />
+            </div>
+            <div className="field-group">
+              <label className="field">Suggested action</label>
+              <input className="input" value={editPostForm.suggestedAction} onChange={(e) => setEditPostForm({ ...editPostForm, suggestedAction: e.target.value })} />
+            </div>
+            <Button variant="primary" className="btn-block" type="submit">Save changes</Button>
+          </form>
+        )}
+      </Modal>
+
       {/* Comments modal */}
       <Modal open={!!commentPost} title="Comments" onClose={() => setCommentPost(null)}>
         {commentPost && (
@@ -268,18 +375,43 @@ export default function ForumPage() {
             <div className="small muted mb-16">On: <strong>{commentPost.title}</strong></div>
             <div className="stack gap-12 mb-16" style={{ maxHeight: 260, overflowY: "auto" }}>
               {comments.length === 0 && <p className="muted small">No comments yet. Start the conversation!</p>}
-              {comments.map((c) => (
-                <div key={c.id} style={{ padding: "10px 12px", background: "var(--surface-2)", borderRadius: 10 }}>
-                  <div className="small" style={{ fontWeight: 700 }}>{c.author} <span className="muted" style={{ fontWeight: 400 }}>&middot; {c.authorYear}</span></div>
-                  <div className="small mt-8">{c.text}</div>
-                </div>
-              ))}
+              {comments.map((c) => {
+                const canDeleteComment = Boolean(user?.id && c.userId && Number(c.userId) === Number(user.id));
+                return (
+                  <div key={c.id} style={{ padding: "10px 12px", background: "var(--surface-2)", borderRadius: 10 }}>
+                    <div className="row gap-8" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                      <div className="small" style={{ fontWeight: 700 }}>{c.author} <span className="muted" style={{ fontWeight: 400 }}>&middot; {c.authorYear}</span></div>
+                      <div className="row gap-8">
+                        {canDeleteComment && (
+                          <Button size="sm" variant="ghost" onClick={() => handleEditComment(c)}>Edit</Button>
+                        )}
+                        {canDeleteComment && (
+                          <Button size="sm" variant="danger" onClick={() => handleDeleteComment(c)}>Delete</Button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="small mt-8">{c.text}</div>
+                  </div>
+                );
+              })}
             </div>
             <form onSubmit={addComment} className="row gap-8">
               <input className="input" placeholder="Add a comment…" value={commentText} onChange={(e) => setCommentText(e.target.value)} />
               <Button variant="primary" type="submit">Send</Button>
             </form>
           </>
+        )}
+      </Modal>
+
+      <Modal open={!!editingComment} title="Edit comment" onClose={() => { setEditingComment(null); setEditCommentText(""); }}>
+        {editingComment && (
+          <form onSubmit={saveEditedComment}>
+            <div className="field-group">
+              <label className="field">Comment</label>
+              <textarea className="textarea" required rows={4} value={editCommentText} onChange={(e) => setEditCommentText(e.target.value)} />
+            </div>
+            <Button variant="primary" className="btn-block" type="submit">Save changes</Button>
+          </form>
         )}
       </Modal>
     </AppShell>

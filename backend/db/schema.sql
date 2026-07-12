@@ -14,6 +14,7 @@ DROP TABLE IF EXISTS comments;
 DROP TABLE IF EXISTS reports;
 DROP TABLE IF EXISTS habits;
 DROP TABLE IF EXISTS admin_requests;
+DROP TABLE IF EXISTS post_upvotes;
 DROP TABLE IF EXISTS posts;
 DROP TABLE IF EXISTS users;
 
@@ -54,6 +55,13 @@ CREATE TABLE comments (
   authorYear VARCHAR(40),
   `text`     TEXT NOT NULL,
   createdAt  DATE
+);
+
+CREATE TABLE post_upvotes (
+  id        INT AUTO_INCREMENT PRIMARY KEY,
+  postId    INT NOT NULL,
+  userId    INT NOT NULL,
+  createdAt DATE DEFAULT (CURRENT_DATE)
 );
 
 CREATE TABLE habits (

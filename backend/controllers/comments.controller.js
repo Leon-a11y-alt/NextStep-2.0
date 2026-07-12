@@ -26,4 +26,36 @@ async function createComment(req, res) {
   res.status(201).json(newComment);
 }
 
-module.exports = { getComments, createComment };
+// PUT /api/comments/:id
+async function updateComment(req, res) {
+  const id = Number(req.params.id);
+  const existing = await commentsRepo.findById(id);
+  if (!existing) return res.status(404).json({ error: "Comment not found." });
+
+  const requesterId = req.body?.userId ?? req.query?.userId;
+  const requesterRole = req.body?.role ?? req.query?.role;
+  if (requesterRole !== "admin" && existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
+    return res.status(403).json({ error: "You can only edit your own comments." });
+  }
+
+  const { text } = req.body;
+  const updated = await commentsRepo.update(id, { text });
+  res.json(updated);
+}
+
+// DELETE /api/comments/:id
+async function deleteComment(req, res) {
+  const id = Number(req.params.id);
+  const existing = await commentsRepo.findById(id);
+  if (!existing) return res.status(404).json({ error: "Comment not found." });
+
+  const requesterId = req.body?.userId ?? req.query?.userId;
+  if (existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
+    return res.status(403).json({ error: "You can only delete your own comments." });
+  }
+
+  const removed = await commentsRepo.remove(id);
+  res.json({ message: "Comment deleted.", comment: removed });
+}
+
+module.exports = { getComments, createComment, updateComment, deleteComment };

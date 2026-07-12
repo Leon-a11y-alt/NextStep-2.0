@@ -28,9 +28,33 @@ async function create(data) {
   return findById(result.insertId);
 }
 
+async function update(id, fields) {
+  const allowed = ["text"];
+  const sets = [];
+  const params = [];
+  for (const key of allowed) {
+    if (fields[key] !== undefined) {
+      sets.push(`${key} = ?`);
+      params.push(fields[key]);
+    }
+  }
+  if (sets.length) {
+    params.push(id);
+    await pool.query(`UPDATE comments SET ${sets.join(", ")} WHERE id = ?`, params);
+  }
+  return findById(id);
+}
+
+async function remove(id) {
+  const comment = await findById(id);
+  if (!comment) return null;
+  await pool.query("DELETE FROM comments WHERE id = ?", [id]);
+  return comment;
+}
+
 async function count() {
   const [rows] = await pool.query("SELECT COUNT(*) AS n FROM comments");
   return rows[0].n;
 }
 
-module.exports = { find, findById, create, count };
+module.exports = { find, findById, create, update, remove, count };
