@@ -6,8 +6,12 @@ fallback. The frontend calls are already written in `frontend/lib/api.js`,
 so when your endpoints return the right shape, the page starts working
 automatically and the amber "Demo data" banner disappears.
 
-**How to run:** `npm run dev` from the repo root (MySQL must be running;
-`cd backend && npm run db:init` re-seeds the database).
+**How to run:** `npm run dev` from the repo root. The database is
+**PostgreSQL hosted on Supabase** — put the project's connection string in
+`backend/.env` as `DATABASE_URL` (see `.env.example`), then
+`cd backend && npm run db:init` re-seeds the database.
+Note: camelCase column names must be double-quoted in SQL ("userId",
+"createdAt", ...) because Postgres lowercases unquoted names.
 
 ---
 
@@ -54,40 +58,33 @@ your page's file and copy the `DEMO_*` constant as your reference.
 ### Suggested schema additions (add to `backend/db/schema.sql`)
 
 ```sql
+-- PostgreSQL (Supabase) syntax: SERIAL ids, BOOLEAN flags, quoted camelCase.
 CREATE TABLE study_plans (
-  id        INT AUTO_INCREMENT PRIMARY KEY,
-  userId    INT NOT NULL,
-  name      VARCHAR(160) NOT NULL,
-  module    VARCHAR(160),
-  createdAt DATE
+  id          SERIAL PRIMARY KEY,
+  "userId"    INT NOT NULL,
+  name        VARCHAR(160) NOT NULL,
+  module      VARCHAR(160),
+  "createdAt" DATE
 );
 
 CREATE TABLE lessons (
-  id        INT AUTO_INCREMENT PRIMARY KEY,
-  planId    INT NOT NULL,
+  id        SERIAL PRIMARY KEY,
+  "planId"  INT NOT NULL,
   title     VARCHAR(255) NOT NULL,
-  completed TINYINT(1) NOT NULL DEFAULT 0
+  completed BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE focus_sessions (
-  id        INT AUTO_INCREMENT PRIMARY KEY,
-  userId    INT NOT NULL,
-  habitId   INT NULL,
-  habitName VARCHAR(255),
-  minutes   INT NOT NULL,
-  date      DATE NOT NULL
+  id          SERIAL PRIMARY KEY,
+  "userId"    INT NOT NULL,
+  "habitId"   INT NULL,
+  "habitName" VARCHAR(255),
+  minutes     INT NOT NULL,
+  date        DATE NOT NULL
 );
 
-CREATE TABLE recommendations (
-  id       INT AUTO_INCREMENT PRIMARY KEY,
-  query    VARCHAR(255) NOT NULL,
-  module   VARCHAR(255) NOT NULL,
-  provider VARCHAR(160),
-  matchPct INT,
-  url      VARCHAR(500),
-  reason   TEXT,
-  topics   VARCHAR(500)  -- comma-separated is fine for the prototype
-);
+-- netacad_courses + recommendations already exist in schema.sql
+-- (Member 5's Study Help backend is implemented — see backend/controllers/help.controller.js)
 ```
 
 Copy an existing feature as your template: `routes/habits.routes.js` →

@@ -1,4 +1,5 @@
-// Admin-access requests + reported-content data-access layer (MySQL).
+// Admin-access requests + reported-content data-access layer (PostgreSQL on Supabase).
+// camelCase columns are double-quoted — Postgres lowercases unquoted names.
 const { pool } = require("../config/db");
 
 // ---- Admin access requests ----
@@ -17,7 +18,7 @@ async function findRequestById(id) {
 
 async function updateRequest(id, { status, reviewedBy, reviewedAt }) {
   await pool.query(
-    "UPDATE admin_requests SET status = ?, reviewedBy = ?, reviewedAt = ? WHERE id = ?",
+    'UPDATE admin_requests SET status = ?, "reviewedBy" = ?, "reviewedAt" = ? WHERE id = ?',
     [status, reviewedBy, reviewedAt, id]
   );
   return findRequestById(id);
@@ -25,7 +26,7 @@ async function updateRequest(id, { status, reviewedBy, reviewedAt }) {
 
 async function countPendingRequests() {
   const [rows] = await pool.query(
-    "SELECT COUNT(*) AS n FROM admin_requests WHERE status = 'pending'"
+    "SELECT COUNT(*)::int AS n FROM admin_requests WHERE status = 'pending'"
   );
   return rows[0].n;
 }
@@ -34,9 +35,9 @@ async function countPendingRequests() {
 // LEFT JOIN so a report for a deleted post still comes back (postTitle NULL).
 async function findReportsWithPostTitle() {
   const [rows] = await pool.query(
-    `SELECT r.*, p.title AS postTitle
+    `SELECT r.*, p.title AS "postTitle"
        FROM reports r
-       LEFT JOIN posts p ON p.id = r.postId
+       LEFT JOIN posts p ON p.id = r."postId"
       ORDER BY r.id`
   );
   return rows;
@@ -54,7 +55,7 @@ async function updateReport(id, { status }) {
 
 async function countOpenReports() {
   const [rows] = await pool.query(
-    "SELECT COUNT(*) AS n FROM reports WHERE status = 'open'"
+    "SELECT COUNT(*)::int AS n FROM reports WHERE status = 'open'"
   );
   return rows[0].n;
 }

@@ -1,4 +1,5 @@
-// Forum posts data-access layer (MySQL).
+// Forum posts data-access layer (PostgreSQL on Supabase).
+// camelCase columns are double-quoted — Postgres lowercases unquoted names.
 const { pool } = require("../config/db");
 
 // Approved posts with optional category + search filtering, newest first.
@@ -35,9 +36,9 @@ async function findByStatus(status) {
 }
 
 async function create(data) {
-  const [result] = await pool.query(
-    `INSERT INTO posts (userId, author, authorYear, title, category, content, suggestedAction, status, upvotes, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+  const [rows] = await pool.query(
+    `INSERT INTO posts ("userId", author, "authorYear", title, category, content, "suggestedAction", status, upvotes, "createdAt")
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?) RETURNING id`,
     [
       data.userId,
       data.author,
@@ -50,7 +51,7 @@ async function create(data) {
       data.createdAt,
     ]
   );
-  return findById(result.insertId);
+  return findById(rows[0].id);
 }
 
 // Update only the fields provided (undefined fields are ignored).
@@ -60,7 +61,7 @@ async function update(id, fields) {
   const params = [];
   for (const key of allowed) {
     if (fields[key] !== undefined) {
-      sets.push(`${key} = ?`);
+      sets.push(`"${key}" = ?`);
       params.push(fields[key]);
     }
   }
@@ -84,13 +85,13 @@ async function incrementUpvotes(id) {
 }
 
 async function count() {
-  const [rows] = await pool.query("SELECT COUNT(*) AS n FROM posts");
+  const [rows] = await pool.query("SELECT COUNT(*)::int AS n FROM posts");
   return rows[0].n;
 }
 
 async function countByStatus(status) {
   const [rows] = await pool.query(
-    "SELECT COUNT(*) AS n FROM posts WHERE status = ?",
+    "SELECT COUNT(*)::int AS n FROM posts WHERE status = ?",
     [status]
   );
   return rows[0].n;

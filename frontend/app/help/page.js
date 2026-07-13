@@ -16,39 +16,30 @@ import Button from "@/components/Button";
 import ApiErrorBanner from "@/components/ApiErrorBanner";
 import { useAuth } from "@/lib/auth";
 import { HelpAPI, PlansAPI } from "@/lib/api";
-import { SearchIcon, SparkIcon, ExternalIcon, PlusIcon } from "@/lib/icons";
+import { SearchIcon, SparkIcon, ExternalIcon, PlusIcon, BookIcon, ClockIcon } from "@/lib/icons";
 
-// Demo response mirroring what the n8n/AI backend should return.
+// Demo response mirroring what the backend returns (used only if the API is down).
 const DEMO_RESULTS = {
-  "operating system": [
-    {
-      id: 1, module: "Operating Systems Basics", provider: "Cisco Networking Academy", match: 95,
-      url: "https://www.netacad.com/courses/operating-systems-basics",
-      reason: "Covers processes, memory and file systems from zero — the best starting point if you don't know where to begin.",
-      topics: ["Processes & threads", "Memory management", "File systems"],
-    },
-    {
-      id: 2, module: "Linux Essentials", provider: "Cisco Networking Academy", match: 82,
-      url: "https://www.netacad.com/courses/linux-essentials",
-      reason: "Hands-on practice with a real OS — reinforces the theory with commands you can actually run.",
-      topics: ["Linux CLI", "Users & permissions", "Shell basics"],
-    },
-    {
-      id: 3, module: "Linux Unhatched", provider: "Cisco Networking Academy", match: 70,
-      url: "https://www.netacad.com/courses/linux-unhatched",
-      reason: "A short beginner course — good if you want a quick win before the heavier modules.",
-      topics: ["Basic commands", "Installation"],
-    },
-  ],
   default: [
     {
-      id: 4, module: "Introduction to Cybersecurity", provider: "Cisco Networking Academy", match: 75,
-      url: "https://www.netacad.com/courses/introduction-to-cybersecurity",
-      reason: "A broad foundation course that matches your search keywords.",
-      topics: ["Security basics", "Threats & attacks"],
+      id: 1, module: "Networking Basics", provider: "Cisco Networking Academy",
+      level: "Beginner", format: "Self-paced", hours: 22, match: 95,
+      url: "https://www.netacad.com/courses/networking-basics",
+      description: "Start learning the basics of computer networking and discover how networks work.",
+      reason: "A good beginner starting point if you are not sure where to begin.",
+      topics: ["networking", "network", "ip address"],
     },
   ],
 };
+
+// Banner backgrounds for the course cards (NetAcad-style thumbnails,
+// drawn with CSS so no external images are needed).
+const BANNERS = [
+  "linear-gradient(135deg, #0f2b46 0%, #12766f 100%)",
+  "linear-gradient(135deg, #1e2a5a 0%, #4f46e5 100%)",
+  "linear-gradient(135deg, #123b2f 0%, #16a34a 100%)",
+  "linear-gradient(135deg, #3b2d5e 0%, #7c3aed 100%)",
+];
 
 export default function HelpPage() {
   const { user } = useAuth();
@@ -72,10 +63,9 @@ export default function HelpPage() {
       setResults(data);
       setDemoMode(false);
     } catch {
-      // Endpoint not built yet — simulate the AI thinking, then demo data.
+      // Backend unreachable — show demo data so the page still works.
       await new Promise((r) => setTimeout(r, 900));
-      const key = Object.keys(DEMO_RESULTS).find((k) => query.toLowerCase().includes(k));
-      setResults(DEMO_RESULTS[key] || DEMO_RESULTS.default);
+      setResults(DEMO_RESULTS.default);
       setDemoMode(true);
     } finally {
       setLoading(false);
@@ -135,37 +125,37 @@ export default function HelpPage() {
               Demo data — <code>/api/help/recommend</code> (n8n webhook) isn&rsquo;t connected yet (see TEAM_HANDOFF.md).
             </div>
           )}
-          <div className="stack gap-16">
-            {results.map((rec) => (
-              <Card key={rec.id} hover>
-                <div className="row" style={{ justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                  <div className="row gap-12">
-                    <div className="stat-icon" style={{ background: "var(--violet-050)", color: "var(--violet)", width: 40, height: 40 }}>
-                      <SparkIcon size={20} />
-                    </div>
-                    <div>
-                      <div className="card-title">{rec.module}</div>
-                      <div className="small muted">{rec.provider}</div>
-                    </div>
+          {/* NetAcad-style course cards */}
+          <div className="nc-grid">
+            {results.map((rec, i) => (
+              <div className="nc-card" key={rec.id}>
+                {/* Banner (CSS thumbnail) with level + match badges */}
+                <div className="nc-banner" style={{ background: BANNERS[i % BANNERS.length] }}>
+                  <SparkIcon size={36} />
+                  <span className="nc-level">{rec.level || "Beginner"}</span>
+                  <span className="nc-match">{rec.match}% match</span>
+                </div>
+
+                <div className="nc-body">
+                  <div className="nc-provider">{rec.provider}</div>
+                  <div className="nc-meta"><BookIcon size={14} /> Course&nbsp; | &nbsp;{rec.format || "Self-paced"}</div>
+                  <div className="nc-title">{rec.module}</div>
+                  <p className="nc-desc">{rec.description}</p>
+                  <div className="nc-why"><strong>Why this course:</strong> {rec.reason}</div>
+
+                  <div className="nc-foot">
+                    <span className="row gap-8"><ClockIcon size={14} /> {rec.hours ? `${rec.hours} Hours` : "Self-paced"}</span>
+                    <span style={{ color: "var(--green)", fontWeight: 700 }}>Free</span>
                   </div>
-                  <span className="badge badge-blue" style={{ height: "fit-content" }}>{rec.match}% match</span>
-                </div>
 
-                <p className="small mt-16" style={{ lineHeight: 1.5 }}>
-                  <strong>Why this module:</strong> {rec.reason}
-                </p>
-
-                <div className="chip-row mt-8">
-                  {rec.topics.map((t) => <span key={t} className="filter-chip" style={{ cursor: "default" }}>{t}</span>)}
+                  <div className="row gap-8 mt-8" style={{ flexWrap: "wrap" }}>
+                    <a href={rec.url} target="_blank" rel="noreferrer" className="grow">
+                      <Button variant="primary" size="sm" className="btn-block"><ExternalIcon size={15} /> Open on NetAcad</Button>
+                    </a>
+                    <Button size="sm" onClick={() => addAsPlan(rec)}><PlusIcon size={15} /> Study plan</Button>
+                  </div>
                 </div>
-
-                <div className="row gap-8 mt-16" style={{ flexWrap: "wrap" }}>
-                  <a href={rec.url} target="_blank" rel="noreferrer">
-                    <Button variant="primary" size="sm"><ExternalIcon size={15} /> Open on NetAcad</Button>
-                  </a>
-                  <Button size="sm" onClick={() => addAsPlan(rec)}><PlusIcon size={15} /> Turn into a study plan</Button>
-                </div>
-              </Card>
+              </div>
             ))}
           </div>
         </>

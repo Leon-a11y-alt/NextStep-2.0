@@ -1,4 +1,5 @@
-// Users data-access layer (MySQL).
+// Users data-access layer (PostgreSQL on Supabase).
+// camelCase columns are double-quoted — Postgres lowercases unquoted names.
 const { pool } = require("../config/db");
 
 async function findByEmail(email) {
@@ -20,12 +21,12 @@ async function listAll() {
 }
 
 async function create({ name, email, password, yearLevel, diploma, role, createdAt }) {
-  const [result] = await pool.query(
-    `INSERT INTO users (name, email, password, yearLevel, diploma, role, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  const [rows] = await pool.query(
+    `INSERT INTO users (name, email, password, "yearLevel", diploma, role, "createdAt")
+     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     [name, email, password, yearLevel, diploma, role, createdAt]
   );
-  return findById(result.insertId);
+  return findById(rows[0].id);
 }
 
 async function updateRole(id, role) {
@@ -34,7 +35,7 @@ async function updateRole(id, role) {
 }
 
 async function count() {
-  const [rows] = await pool.query("SELECT COUNT(*) AS n FROM users");
+  const [rows] = await pool.query("SELECT COUNT(*)::int AS n FROM users");
   return rows[0].n;
 }
 
