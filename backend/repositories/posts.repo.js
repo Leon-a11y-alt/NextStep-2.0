@@ -2,29 +2,48 @@
 // camelCase columns are double-quoted — Postgres lowercases unquoted names.
 const { pool } = require("../config/db");
 
+const inMemoryVotes = new Map();
+
+function getVoteSet(postId) {
+  if (!inMemoryVotes.has(postId)) inMemoryVotes.set(postId, new Set());
+  return inMemoryVotes.get(postId);
+}
+
+function isPostUpvotedByUser(postId, userId) {
+  return Boolean(userId && getVoteSet(postId).has(Number(userId)));
+}
+
 // Approved posts with optional category + search filtering, newest first.
-async function findApproved({ category, search }) {
-  let sql = "SELECT * FROM posts WHERE status = 'approved'";
+async function findApproved({ category, search, userId }) {
+  let sql = "SELECT p.*, 0 AS upvotedByUser FROM posts p WHERE p.status = 'approved'";
   const params = [];
 
   if (category && category !== "All") {
-    sql += " AND category = ?";
+    sql += " AND p.category = ?";
     params.push(category);
   }
   if (search) {
-    sql += " AND (LOWER(title) LIKE ? OR LOWER(content) LIKE ?)";
+    sql += " AND (LOWER(p.title) LIKE ? OR LOWER(p.content) LIKE ?)";
     const q = `%${search.toLowerCase()}%`;
     params.push(q, q);
   }
-  sql += " ORDER BY id DESC";
+  sql += " ORDER BY p.id DESC";
 
   const [rows] = await pool.query(sql, params);
-  return rows;
+  return rows.map((row) => ({
+    ...row,
+    upvotedByUser: isPostUpvotedByUser(row.id, userId),
+  }));
 }
 
-async function findById(id) {
-  const [rows] = await pool.query("SELECT * FROM posts WHERE id = ? LIMIT 1", [id]);
-  return rows[0] || null;
+async function findById(id, userId) {
+  const [rows] = await pool.query(
+    "SELECT p.*, 0 AS upvotedByUser FROM posts p WHERE p.id = ? LIMIT 1",
+    [id]
+  );
+  const row = rows[0] || null;
+  if (!row) return null;
+  return { ...row, upvotedByUser: isPostUpvotedByUser(row.id, userId) };
 }
 
 async function findByStatus(status) {
@@ -79,9 +98,36 @@ async function remove(id) {
   return post;
 }
 
-async function incrementUpvotes(id) {
-  await pool.query("UPDATE posts SET upvotes = upvotes + 1 WHERE id = ?", [id]);
-  return findById(id);
+async function toggleUpvote(id, userId) {
+  const post = await findById(id, userId);
+  if (!post) return null;
+
+  try {
+    const [existing] = await pool.query(
+      "SELECT * FROM post_upvotes WHERE postId = ? AND userId = ? LIMIT 1",
+      [id, userId]
+    );
+
+    if (existing.length) {
+      await pool.query("DELETE FROM post_upvotes WHERE postId = ? AND userId = ?", [id, userId]);
+      await pool.query("UPDATE posts SET upvotes = GREATEST(upvotes - 1, 0) WHERE id = ?", [id]);
+      getVoteSet(id).delete(Number(userId));
+    } else {
+      await pool.query("INSERT INTO post_upvotes (postId, userId) VALUES (?, ?)", [id, userId]);
+      await pool.query("UPDATE posts SET upvotes = upvotes + 1 WHERE id = ?", [id]);
+      getVoteSet(id).add(Number(userId));
+    }
+  } catch (err) {
+    const currentVotes = Number(post.upvotes || 0);
+    const hasVote = isPostUpvotedByUser(id, userId);
+    const nextVotes = hasVote ? Math.max(currentVotes - 1, 0) : currentVotes + 1;
+    const voteSet = getVoteSet(id);
+    if (hasVote) voteSet.delete(Number(userId));
+    else voteSet.add(Number(userId));
+    await pool.query("UPDATE posts SET upvotes = ? WHERE id = ?", [nextVotes, id]);
+  }
+
+  return findById(id, userId);
 }
 
 async function count() {
@@ -104,7 +150,7 @@ module.exports = {
   create,
   update,
   remove,
-  incrementUpvotes,
+  toggleUpvote,
   count,
   countByStatus,
 };

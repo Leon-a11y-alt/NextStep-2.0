@@ -16,6 +16,7 @@ DROP TABLE IF EXISTS comments;
 DROP TABLE IF EXISTS reports;
 DROP TABLE IF EXISTS habits;
 DROP TABLE IF EXISTS admin_requests;
+DROP TABLE IF EXISTS post_upvotes;
 DROP TABLE IF EXISTS posts;
 DROP TABLE IF EXISTS users;
 
@@ -54,6 +55,16 @@ CREATE TABLE comments (
   "authorYear" VARCHAR(40),
   text         TEXT NOT NULL,
   "createdAt"  DATE
+);
+
+-- One row per user per post; columns intentionally unquoted (they fold to
+-- lowercase) to match the queries in posts.repo.js toggleUpvote().
+CREATE TABLE post_upvotes (
+  id        SERIAL PRIMARY KEY,
+  postId    INT NOT NULL,
+  userId    INT NOT NULL,
+  createdAt DATE DEFAULT CURRENT_DATE,
+  UNIQUE (postId, userId)
 );
 
 CREATE TABLE habits (

@@ -28,6 +28,7 @@ function test(name, fn) { tests.push({ name, fn }); }
 
 const auth = require("../controllers/auth.controller");
 const postsCtrl = require("../controllers/posts.controller");
+const commentsCtrl = require("../controllers/comments.controller");
 const habitsCtrl = require("../controllers/habits.controller");
 const adminCtrl = require("../controllers/admin.controller");
 
@@ -60,6 +61,114 @@ test("post is created when title and content are given", async () => {
   );
   assert.strictEqual(res.statusCode, 201);
   assert.strictEqual(res.body.status, "approved");
+});
+
+test("owner can edit their own post", async () => {
+  const createRes = mockRes();
+  await postsCtrl.createPost(
+    { body: { title: "Original title", content: "original content", author: "Tester", userId: 2 } },
+    createRes
+  );
+
+  const res = mockRes();
+  await postsCtrl.updatePost(
+    { params: { id: String(createRes.body.id) }, body: { title: "Updated title", content: "updated content", userId: 2 } },
+    res
+  );
+
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.title, "Updated title");
+  assert.strictEqual(res.body.content, "updated content");
+});
+
+test("a user can upvote once and then remove that upvote", async () => {
+  const createRes = mockRes();
+  await postsCtrl.createPost(
+    { body: { title: "Vote toggle", content: "toggle me", author: "Tester", userId: 1 } },
+    createRes
+  );
+
+  const first = mockRes();
+  await postsCtrl.upvotePost({ params: { id: String(createRes.body.id) }, body: { userId: 9 } }, first);
+  assert.strictEqual(first.statusCode, 200);
+  assert.strictEqual(first.body.upvotes, 1);
+
+  const second = mockRes();
+  await postsCtrl.upvotePost({ params: { id: String(createRes.body.id) }, body: { userId: 9 } }, second);
+  assert.strictEqual(second.statusCode, 200);
+  assert.strictEqual(second.body.upvotes, 0);
+});
+
+test("owner can delete their own post", async () => {
+  const createRes = mockRes();
+  await postsCtrl.createPost(
+    { body: { title: "Delete me", content: "temporary", author: "Tester", userId: 2 } },
+    createRes
+  );
+
+  const res = mockRes();
+  await postsCtrl.deletePost({ params: { id: String(createRes.body.id) }, body: { userId: 2 } }, res);
+
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.post.id, createRes.body.id);
+});
+
+test("non-owner cannot delete someone else's post", async () => {
+  const createRes = mockRes();
+  await postsCtrl.createPost(
+    { body: { title: "Protected post", content: "keep me", author: "Tester", userId: 1 } },
+    createRes
+  );
+
+  const res = mockRes();
+  await postsCtrl.deletePost({ params: { id: String(createRes.body.id) }, body: { userId: 2 } }, res);
+
+  assert.strictEqual(res.statusCode, 403);
+});
+
+test("admin can delete any post", async () => {
+  const createRes = mockRes();
+  await postsCtrl.createPost(
+    { body: { title: "Admin delete me", content: "can be removed", author: "Tester", userId: 1 } },
+    createRes
+  );
+
+  const res = mockRes();
+  await postsCtrl.deletePost({ params: { id: String(createRes.body.id) }, body: { userId: 2, role: "admin" } }, res);
+
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.post.id, createRes.body.id);
+});
+
+test("owner can edit their own comment", async () => {
+  const createRes = mockRes();
+  await commentsCtrl.createComment(
+    { body: { postId: 1, userId: 2, author: "Tester", text: "original comment" } },
+    createRes
+  );
+
+  const res = mockRes();
+  await commentsCtrl.updateComment(
+    { params: { id: String(createRes.body.id) }, body: { text: "edited comment", userId: 2 } },
+    res
+  );
+
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.text, "edited comment");
+});
+
+test("owner can delete their own comment", async () => {
+  const createRes = mockRes();
+  await commentsCtrl.createComment(
+    { body: { postId: 1, userId: 2, author: "Tester", text: "temporary comment" } },
+    createRes
+  );
+
+  const res = mockRes();
+  await commentsCtrl.deleteComment({ params: { id: String(createRes.body.id) }, body: { userId: 2 } }, res);
+
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.comment.id, createRes.body.id);
 });
 
 // --- Habits: a forum suggested action can become a habit ---
