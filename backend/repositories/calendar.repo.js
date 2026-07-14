@@ -22,9 +22,9 @@ async function findById(id) {
 
 async function create(data) {
   const [rows] = await pool.query(
-    `INSERT INTO calendar_tasks ("userId", "habitId", title, date, time, completed)
-     VALUES (?, ?, ?, ?, ?, FALSE) RETURNING id`,
-    [data.userId, data.habitId, data.title, data.date, data.time]
+    `INSERT INTO calendar_tasks ("userId", "habitId", "planId", title, date, time, completed)
+     VALUES (?, ?, ?, ?, ?, ?, FALSE) RETURNING id`,
+    [data.userId, data.habitId, data.planId, data.title, data.date, data.time]
   );
   return findById(rows[0].id);
 }

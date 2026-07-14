@@ -413,7 +413,18 @@ html[data-mode="habit"] body {
   color: var(--primary-700); font-weight: 650; cursor: pointer; line-height: 1.2;
 }
 .cal-chip.done { background: var(--green-050); color: var(--green); text-decoration: line-through; opacity: .8; }
-@media (max-width: 860px) { .cal-grid { grid-template-columns: 1fr; } .cal-day { min-height: auto; } }
+
+/* Month view: shorter cells (up to 6 rows) + dim the days outside the month (WK) */
+.cal-grid.month .cal-day { min-height: 96px; padding: 8px; }
+.cal-grid.month .cal-day.outside { opacity: .45; }
+.cal-grid.month .cal-daynum { justify-content: flex-start; }
+
+@media (max-width: 860px) {
+  .cal-grid { grid-template-columns: 1fr; }
+  .cal-day { min-height: auto; }
+  .cal-grid.month { grid-template-columns: repeat(7, 1fr); }
+  .cal-grid.month .cal-day { min-height: 64px; }
+}
 
 /* ---------- Auth (login / register) screen ---------- */
 .auth-page {

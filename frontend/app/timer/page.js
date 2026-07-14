@@ -13,7 +13,7 @@ import Card from "@/components/Card";
 import Button from "@/components/Button";
 import ApiErrorBanner from "@/components/ApiErrorBanner";
 import { useAuth } from "@/lib/auth";
-import { HabitsAPI, FocusAPI } from "@/lib/api";
+import { HabitsAPI, FocusAPI, PlansAPI } from "@/lib/api";
 import { readPrefs } from "@/lib/prefs";
 import { PlayIcon, PauseIcon, ClockIcon, CheckIcon } from "@/lib/icons";
 
@@ -35,13 +35,14 @@ function fmt(totalSeconds) {
 export default function TimerPage() {
   const { user } = useAuth();
   const [habits, setHabits] = useState([]);
+  const [plans, setPlans] = useState([]);          // study plans you can focus on
   const [sessions, setSessions] = useState([]);
   const [demoMode, setDemoMode] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  // Timer state
-  const [target, setTarget] = useState("");        // habit id ("" = free focus)
+  // Timer state. `target` is "" (free focus), "habit:<id>" or "plan:<id>".
+  const [target, setTarget] = useState("");
   const [minutes, setMinutes] = useState(25);
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
   const [running, setRunning] = useState(false);
@@ -51,6 +52,7 @@ export default function TimerPage() {
     if (!user) return;
     setError("");
     try { setHabits(await HabitsAPI.list(user.id)); } catch (err) { setError(err.message); }
+    try { setPlans(await PlansAPI.list(user.id)); } catch { /* plans optional */ }
     try {
       setSessions(await FocusAPI.list(user.id));
       setDemoMode(false);
@@ -67,6 +69,13 @@ export default function TimerPage() {
     const m = readPrefs().timerDefault;
     if (DURATIONS.includes(m)) { setMinutes(m); setSecondsLeft(m * 60); }
   }, []);
+
+  // If we arrived from the Study Plans page (/timer?plan=<id>), pre-select
+  // that plan as the focus target once the plans have loaded. (Khaing Khant Zaw)
+  useEffect(() => {
+    const planId = new URLSearchParams(window.location.search).get("plan");
+    if (planId && plans.some((p) => String(p.id) === planId)) setTarget(`plan:${planId}`);
+  }, [plans]);
 
   // Countdown loop.
   useEffect(() => {
@@ -94,15 +103,20 @@ export default function TimerPage() {
     setSecondsLeft(minutes * 60);
   }
 
-  const habit = habits.find((h) => String(h.id) === String(target));
+  // Resolve the dropdown value into the actual habit OR plan being focused on.
+  const [targetKind, targetId] = target.includes(":") ? target.split(":") : ["", ""];
+  const habit = targetKind === "habit" ? habits.find((h) => String(h.id) === targetId) : null;
+  const plan = targetKind === "plan" ? plans.find((p) => String(p.id) === targetId) : null;
+  const focusName = habit?.name || plan?.name || "Free focus";
 
   async function handleSessionDone(early = false) {
     setRunning(false);
     const spentMin = Math.max(1, Math.round((minutes * 60 - secondsLeft) / 60)) || minutes;
     const entry = {
       userId: user.id,
+      // Sessions link to a habit when one is chosen; plans are logged by name.
       habitId: habit?.id || null,
-      habitName: habit?.name || "Free focus",
+      habitName: focusName,
       minutes: early ? spentMin : minutes,
       date: new Date().toISOString().slice(0, 10),
     };
@@ -148,10 +162,21 @@ export default function TimerPage() {
           <div className="field-group" style={{ textAlign: "left" }}>
             <label className="field">What are you focusing on?</label>
             <select className="select" value={target} onChange={(e) => setTarget(e.target.value)} disabled={running}>
-              <option value="">Free focus (no habit linked)</option>
-              {habits.filter((h) => h.status === "active").map((h) => (
-                <option key={h.id} value={h.id}>{h.name}</option>
-              ))}
+              <option value="">Free focus (nothing linked)</option>
+              {habits.filter((h) => h.status === "active").length > 0 && (
+                <optgroup label="Habits">
+                  {habits.filter((h) => h.status === "active").map((h) => (
+                    <option key={`h${h.id}`} value={`habit:${h.id}`}>{h.name}</option>
+                  ))}
+                </optgroup>
+              )}
+              {plans.length > 0 && (
+                <optgroup label="Study plans">
+                  {plans.map((p) => (
+                    <option key={`p${p.id}`} value={`plan:${p.id}`}>{p.name}</option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
 
@@ -182,6 +207,7 @@ export default function TimerPage() {
             )}
           </div>
           {habit && <p className="small muted mt-16">Finishing this session updates the progress of <strong>{habit.name}</strong>.</p>}
+          {plan && <p className="small muted mt-16">Focusing on your study plan <strong>{plan.name}</strong>.</p>}
         </Card>
 
         {/* Session history */}

@@ -90,6 +90,7 @@ CREATE TABLE calendar_tasks (
   id        SERIAL PRIMARY KEY,
   "userId"  INT,
   "habitId" INT NULL,
+  "planId"  INT NULL,   -- set when the task was scheduled from a Study Plan (WK)
   title     VARCHAR(255) NOT NULL,
   date      DATE NOT NULL,
   time      VARCHAR(5),
