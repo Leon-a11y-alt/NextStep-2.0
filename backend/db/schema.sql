@@ -21,6 +21,7 @@ DROP TABLE IF EXISTS reports CASCADE;
 DROP TABLE IF EXISTS habits CASCADE;
 DROP TABLE IF EXISTS admin_requests CASCADE;
 DROP TABLE IF EXISTS post_upvotes CASCADE;
+DROP TABLE IF EXISTS post_downvotes CASCADE;
 DROP TABLE IF EXISTS posts CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
@@ -68,6 +69,15 @@ CREATE TABLE comments (
 -- One row per user per post; columns intentionally unquoted (they fold to
 -- lowercase) to match the queries in posts.repo.js toggleUpvote().
 CREATE TABLE post_upvotes (
+  id        SERIAL PRIMARY KEY,
+  postId    INT NOT NULL,
+  userId    INT NOT NULL,
+  createdAt DATE DEFAULT CURRENT_DATE,
+  UNIQUE (postId, userId)
+);
+
+-- One row per user per post; mirrors post_upvotes for the downvote toggle.
+CREATE TABLE post_downvotes (
   id        SERIAL PRIMARY KEY,
   postId    INT NOT NULL,
   userId    INT NOT NULL,
