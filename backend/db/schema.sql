@@ -12,6 +12,9 @@
 -- foreign-key constraints; we recreate everything from scratch anyway.
 DROP TABLE IF EXISTS recommendations CASCADE;
 DROP TABLE IF EXISTS netacad_courses CASCADE;
+DROP TABLE IF EXISTS focus_sessions CASCADE;
+DROP TABLE IF EXISTS lessons CASCADE;
+DROP TABLE IF EXISTS study_plans CASCADE;
 DROP TABLE IF EXISTS calendar_tasks CASCADE;
 DROP TABLE IF EXISTS comments CASCADE;
 DROP TABLE IF EXISTS reports CASCADE;
@@ -46,6 +49,7 @@ CREATE TABLE posts (
   "suggestedAction" VARCHAR(255),
   status            VARCHAR(20) NOT NULL DEFAULT 'pending',  -- 'approved' | 'pending' | 'rejected'
   upvotes           INT NOT NULL DEFAULT 0,
+  downvotes         INT NOT NULL DEFAULT 0,   -- 👎 on the question (Andrea Ho)
   "createdAt"       DATE
 );
 
@@ -56,6 +60,8 @@ CREATE TABLE comments (
   author       VARCHAR(120),
   "authorYear" VARCHAR(40),
   text         TEXT NOT NULL,
+  likes        INT NOT NULL DEFAULT 0,   -- 👍 on a piece of advice
+  dislikes     INT NOT NULL DEFAULT 0,   -- 👎 on a piece of advice
   "createdAt"  DATE
 );
 
@@ -132,37 +138,54 @@ CREATE TABLE recommendations (
   "createdAt" DATE
 );
 
+-- Study Plans: a plan (a module) contains many lessons. Progress on the
+-- dashboard = completed lessons / total lessons.
+CREATE TABLE study_plans (
+  id             SERIAL PRIMARY KEY,
+  "userId"       INT NOT NULL,
+  name           VARCHAR(160) NOT NULL,
+  module         VARCHAR(160),
+  frequency      VARCHAR(40),   -- how often to work on it (from the advice modal)
+  "sourcePostId" INT NULL,      -- set when the plan was created from a forum post's advice
+  "createdAt"    DATE
+);
+
+CREATE TABLE lessons (
+  id        SERIAL PRIMARY KEY,
+  "planId"  INT NOT NULL,
+  title     VARCHAR(255) NOT NULL,
+  completed BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+-- Focus Timer: one row per finished focus session. The dashboard's
+-- "Focused today" sums minutes where date = today.
+CREATE TABLE focus_sessions (
+  id          SERIAL PRIMARY KEY,
+  "userId"    INT NOT NULL,
+  "habitId"   INT NULL,
+  "habitName" VARCHAR(255),
+  minutes     INT NOT NULL,
+  date        DATE NOT NULL
+);
+
 -- ---- Seed data (matches the original in-memory mock content) ------------
 
 INSERT INTO users (id, name, email, password, "yearLevel", diploma, role, "createdAt") VALUES
   (1, 'Alex Tan',      'alex@rp.edu.sg',  'password123', 'Year 2', 'Diploma in Information Technology', 'user',  '2026-01-05'),
   (2, 'Priya Nair',    'priya@rp.edu.sg', 'password123', 'Year 3', 'Diploma in Information Technology', 'user',  '2026-01-06'),
-  (3, 'Admin Officer', 'admin@rp.edu.sg', 'admin123',    'Year 3', 'Diploma in Information Technology', 'admin', '2026-01-02');
+  (3, 'Admin Officer', 'admin@rp.edu.sg', 'admin123',    'Year 3', 'Diploma in Information Technology', 'admin', '2026-01-02'),
+  -- Year 1 student who asks for help on the forum (Done by Andrea Ho).
+  (4, 'Bryan Lee',     'bryan@rp.edu.sg', 'password123', 'Year 1', 'Diploma in Information Technology', 'user',  '2026-01-08');
 
-INSERT INTO posts (id, "userId", author, "authorYear", title, category, content, "suggestedAction", status, upvotes, "createdAt") VALUES
-  (1, 2, 'Priya Nair', 'Year 3', 'How I recovered after failing my first internship interview', 'Internship rejection',
-   'I failed my first interview because my GitHub was almost empty. I started building one small project every week and writing a short README for each. Three months later my portfolio looked completely different and I got an offer.',
-   'Build one small project every week and update my portfolio', 'approved', 42, '2026-02-10'),
-  (2, 2, 'Priya Nair', 'Year 3', 'A simple exam prep routine that actually works', 'Exam preparation',
-   'Instead of cramming, I studied one topic per day and did a 20-minute recap of the previous day first. Spaced repetition made a huge difference for my grades.',
-   'Study one topic daily and recap yesterday''s topic for 20 minutes', 'approved', 35, '2026-02-14'),
-  (3, 1, 'Alex Tan', 'Year 2', 'Beating procrastination with the 2-minute rule', 'Time management',
-   'Whenever a task felt too big, I told myself to just do 2 minutes of it. Starting is the hardest part, and most times I kept going well past the 2 minutes.',
-   'Start every hard task with just 2 focused minutes', 'approved', 28, '2026-02-18'),
-  (4, 1, 'Alex Tan', 'Year 2', 'How I finally kept a consistent coding practice', 'Programming practice',
-   'I committed to solving one easy algorithm problem every weekday morning before class. Keeping it small and daily made it stick.',
-   'Solve one easy coding problem every weekday morning', 'approved', 19, '2026-02-20'),
-  (5, 1, 'Alex Tan', 'Year 2', 'My scholarship application checklist', 'Scholarship application',
-   'Here is the checklist I used: strong personal statement, two recommendation letters, a clear CCA record, and proof of community work. Start at least a month early.',
-   'Prepare scholarship documents one month before the deadline', 'pending', 0, '2026-02-24'),
-  (6, 2, 'Priya Nair', 'Year 3', 'Working well in project teams', 'Project teamwork',
-   'We used a shared task board and a 10-minute daily check-in. Everyone knew what to do and nothing was forgotten at the last minute.',
-   'Run a 10-minute daily team check-in during projects', 'pending', 0, '2026-02-25');
+-- A single, clean demo thread: Bryan's question + Priya's reply (Done by Andrea Ho).
+INSERT INTO posts (id, "userId", author, "authorYear", title, category, content, "suggestedAction", status, upvotes, downvotes, "createdAt") VALUES
+  (1, 4, 'Bryan Lee', 'Year 1', 'Struggling with Programming Fundamentals — any senior advice?', 'Programming practice',
+   'Hi I am year 1 student so right now I am having problem with the programming fundamental course mostly right now. Can any seniors suggest any advices or solutions for this?',
+   NULL, 'approved', 12, 1, '2026-07-12');
 
-INSERT INTO comments (id, "postId", "userId", author, "authorYear", text, "createdAt") VALUES
-  (1, 1, 1, 'Alex Tan',      'Year 2', 'This motivated me to finally start committing daily. Thank you!',  '2026-02-11'),
-  (2, 1, 3, 'Admin Officer', 'Year 3', 'Great, honest advice. Portfolios matter a lot for interviews.',    '2026-02-12'),
-  (3, 2, 1, 'Alex Tan',      'Year 2', 'The recap-first idea is genius. Trying it this week.',              '2026-02-15');
+INSERT INTO comments (id, "postId", "userId", author, "authorYear", text, likes, dislikes, "createdAt") VALUES
+  -- The senior's reply to Bryan that becomes a study plan in the demo.
+  (1, 1, 2, 'Priya Nair', 'Year 3', 'HII!! I just want to say that it is totally normal to struggle because I was in the same boat as you. At my time, I just went through this website called W3 School website. There they have like all these beginner programmes for python. I just practise using that. Hope this helps!.', 15, 0, '2026-07-12');
 
 INSERT INTO habits (id, "userId", "sourcePostId", name, frequency, status, progress, "createdAt") VALUES
   (1, 1, 3,    'Start hard tasks with 2 focused minutes', 'Daily',    'active',    60, '2026-02-19'),
@@ -181,7 +204,7 @@ INSERT INTO admin_requests (id, "userId", name, reason, status, "reviewedBy", "r
   (1, 2, 'Priya Nair', 'I help moderate the study-habits category and would like moderator access.', 'pending', NULL, NULL);
 
 INSERT INTO reports (id, "postId", "reportedBy", reason, status) VALUES
-  (1, 4, 'Priya Nair', 'Possible duplicate of another coding-practice post.', 'open');
+  (1, 1, 'Alex Tan', 'Flagged for moderator review.', 'open');
 
 -- The NetAcad courses I have taken so far. Done by Khaing Khant Zaw.
 INSERT INTO netacad_courses (id, name, provider, level, format, hours, description, topics, url) VALUES
@@ -202,6 +225,29 @@ INSERT INTO netacad_courses (id, name, provider, level, format, hours, descripti
    'devnet, devops, automation, api, apis, rest, python, networking, software development, cicd',
    'https://www.netacad.com/courses/devnet-associate');
 
+-- Study plans + lessons for Alex (userId 1). Matches the dashboard numbers:
+-- 2 plans, 3 of 8 lessons completed.
+INSERT INTO study_plans (id, "userId", name, module, "createdAt") VALUES
+  (1, 1, 'Biology',           'C205 Biology Fundamentals', '2026-02-15'),
+  (2, 1, 'Operating Systems', 'C270 Operating Systems',    '2026-02-18');
+
+INSERT INTO lessons (id, "planId", title, completed) VALUES
+  (1, 1, 'Cell structure & organelles', TRUE),
+  (2, 1, 'Photosynthesis',              TRUE),
+  (3, 1, 'Cellular respiration',        FALSE),
+  (4, 1, 'Genetics & heredity',         FALSE),
+  (5, 1, 'Ecosystems',                  FALSE),
+  (6, 2, 'Processes & threads',         TRUE),
+  (7, 2, 'CPU scheduling',              FALSE),
+  (8, 2, 'Memory management',           FALSE);
+
+-- Focus sessions for Alex. Two are dated today (CURRENT_DATE) so the
+-- dashboard's "Focused today" reads 70 min right after seeding; one is older.
+INSERT INTO focus_sessions ("userId", "habitId", "habitName", minutes, date) VALUES
+  (1, 2,    'Solve one coding problem each weekday', 25, CURRENT_DATE),
+  (1, 4,    'Recap yesterday''s topic for 20 minutes', 45, CURRENT_DATE),
+  (1, 2,    'Solve one coding problem each weekday', 25, CURRENT_DATE - 8);
+
 -- Seeding used explicit ids, so move each table's auto-increment sequence
 -- past them (otherwise the next INSERT would reuse id 1 and fail).
 SELECT setval(pg_get_serial_sequence('users', 'id'),           (SELECT MAX(id) FROM users));
@@ -212,3 +258,5 @@ SELECT setval(pg_get_serial_sequence('calendar_tasks', 'id'),  (SELECT MAX(id) F
 SELECT setval(pg_get_serial_sequence('admin_requests', 'id'),  (SELECT MAX(id) FROM admin_requests));
 SELECT setval(pg_get_serial_sequence('reports', 'id'),         (SELECT MAX(id) FROM reports));
 SELECT setval(pg_get_serial_sequence('netacad_courses', 'id'), (SELECT MAX(id) FROM netacad_courses));
+SELECT setval(pg_get_serial_sequence('study_plans', 'id'),     (SELECT MAX(id) FROM study_plans));
+SELECT setval(pg_get_serial_sequence('lessons', 'id'),         (SELECT MAX(id) FROM lessons));

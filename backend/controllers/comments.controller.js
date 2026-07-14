@@ -58,4 +58,18 @@ async function deleteComment(req, res) {
   res.json({ message: "Comment deleted.", comment: removed });
 }
 
-module.exports = { getComments, createComment, updateComment, deleteComment };
+// POST /api/comments/:id/like  — 👍 a piece of advice. (Done by Andrea Ho)
+async function likeComment(req, res) {
+  const updated = await commentsRepo.vote(Number(req.params.id), "likes");
+  if (!updated) return res.status(404).json({ error: "Comment not found." });
+  res.json(updated);
+}
+
+// POST /api/comments/:id/dislike  — 👎 a piece of advice.
+async function dislikeComment(req, res) {
+  const updated = await commentsRepo.vote(Number(req.params.id), "dislikes");
+  if (!updated) return res.status(404).json({ error: "Comment not found." });
+  res.json(updated);
+}
+
+module.exports = { getComments, createComment, updateComment, deleteComment, likeComment, dislikeComment };

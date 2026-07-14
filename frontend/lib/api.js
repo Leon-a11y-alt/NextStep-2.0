@@ -47,13 +47,17 @@ export const PostsAPI = {
   update: (id, payload) => api.put(`/api/posts/${id}`, payload),
   remove: (id, userId, role) => api.del(`/api/posts/${id}`, { userId, role }),
   upvote: (id, userId) => api.post(`/api/posts/${id}/upvote`, { userId }),
+  downvote: (id, userId) => api.post(`/api/posts/${id}/downvote`, { userId }), // 👎 the question — Andrea Ho
 };
 
 export const CommentsAPI = {
   list: (postId) => api.get(`/api/comments?postId=${postId}`),
+  all: () => api.get("/api/comments"),          // every comment (grouped by post on the forum) — Andrea Ho
   create: (payload) => api.post("/api/comments", payload),
   update: (id, payload) => api.put(`/api/comments/${id}`, payload),
   remove: (id, userId) => api.del(`/api/comments/${id}`, { userId }),
+  like: (id) => api.post(`/api/comments/${id}/like`, {}),       // 👍 advice — Done by Andrea Ho
+  dislike: (id) => api.post(`/api/comments/${id}/dislike`, {}), // 👎 advice — Done by Andrea Ho
 };
 
 export const HabitsAPI = {

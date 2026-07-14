@@ -53,9 +53,16 @@ async function remove(id) {
   return comment;
 }
 
+// Add one like or one dislike to a comment. `field` is chosen by the
+// controller (never raw user input), so it is safe to inline here.
+async function vote(id, field) {
+  await pool.query(`UPDATE comments SET ${field} = ${field} + 1 WHERE id = ?`, [id]);
+  return findById(id);
+}
+
 async function count() {
   const [rows] = await pool.query("SELECT COUNT(*)::int AS n FROM comments");
   return rows[0].n;
 }
 
-module.exports = { find, findById, create, update, remove, count };
+module.exports = { find, findById, create, update, remove, vote, count };

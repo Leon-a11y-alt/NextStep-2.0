@@ -1,10 +1,12 @@
 "use client";
-// Dashboard — two different dashboards, one per app mode:
-//   Study mode: study plans, focus time, study help.
-//   Habit mode: habits, streaks, advice saved.
-// Both share the calendar + forum data; the study widgets read the same
-// endpoints as their feature pages (PlansAPI / FocusAPI) and fall back to
-// demo data until those backends exist (see TEAM_HANDOFF.md).
+// Dashboard — Done by Hong Wei
+// The dashboard doesn't own any data of its own: it is the integration point
+// that pulls each number straight from the feature that owns it, so the
+// figures here always match the individual feature pages.
+//   Study mode : Study Plans (plans), Focus Timer (sessions), Calendar (tasks)
+//   Habit mode : Habit Tracker (habits), Forum (posts), Calendar (tasks)
+// Every stat below is computed from these live API responses — no fake/demo
+// numbers, so it reads the same one database as the feature pages.
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
@@ -21,52 +23,45 @@ import {
   BookIcon, ClockIcon, SparkIcon,
 } from "@/lib/icons";
 
-// Demo fallbacks mirroring the feature pages' demo data.
-const DEMO_PLANS = [
-  { id: 1, name: "Biology", lessons: [{ completed: true }, { completed: true }, { completed: false }, { completed: false }, { completed: false }] },
-  { id: 2, name: "Operating Systems", lessons: [{ completed: true }, { completed: false }, { completed: false }] },
-];
-const DEMO_SESSIONS = [
-  { id: 1, habitName: "Solve one coding problem each weekday", minutes: 25, date: new Date().toISOString().slice(0, 10) },
-  { id: 2, habitName: "Recap yesterday's topic for 20 minutes", minutes: 45, date: new Date().toISOString().slice(0, 10) },
-  { id: 3, habitName: "Solve one coding problem each weekday", minutes: 25, date: "2026-07-06" },
-];
-
+// A plan's progress = completed lessons / total lessons (same maths the
+// Study Plans page uses, so the bars match).
 const planProgress = (p) =>
   p.lessons.length ? Math.round((p.lessons.filter((l) => l.completed).length / p.lessons.length) * 100) : 0;
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const { mode } = useMode();
-  const [habits, setHabits] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [posts, setPosts] = useState([]);
-  const [plans, setPlans] = useState([]);
-  const [sessions, setSessions] = useState([]);
+  const [habits, setHabits] = useState([]);     // Habit Tracker
+  const [tasks, setTasks] = useState([]);       // Calendar (scheduled tasks)
+  const [posts, setPosts] = useState([]);       // Forum
+  const [plans, setPlans] = useState([]);       // Study Plans (+ their lessons)
+  const [sessions, setSessions] = useState([]); // Focus Timer
   const [error, setError] = useState("");
 
+  // Load every feature's data in parallel — one call per feature it mirrors.
+  // Done by Hong Wei
   async function load() {
     if (!user) return;
     setError("");
     try {
-      const [h, t, p] = await Promise.all([
-        HabitsAPI.list(user.id),
-        CalendarAPI.list(user.id),
-        PostsAPI.list(),
+      const [h, t, p, pl, s] = await Promise.all([
+        HabitsAPI.list(user.id),   // -> habits
+        CalendarAPI.list(user.id), // -> calendar tasks (the "Upcoming plans")
+        PostsAPI.list(),           // -> forum posts
+        PlansAPI.list(user.id),    // -> study plans + lessons
+        FocusAPI.list(user.id),    // -> focus sessions
       ]);
-      setHabits(h); setTasks(t); setPosts(p);
+      setHabits(h); setTasks(t); setPosts(p); setPlans(pl); setSessions(s);
     } catch (err) {
       setError(err.message);
     }
-    // Study widgets: real API first, demo data until the backend exists.
-    try { setPlans(await PlansAPI.list(user.id)); } catch { setPlans(DEMO_PLANS); }
-    try { setSessions(await FocusAPI.list(user.id)); } catch { setSessions(DEMO_SESSIONS); }
   }
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [user]);
 
-  // Shared numbers.
+  // ---- Numbers shared by both dashboards ----
   const completedTasks = tasks.filter((t) => t.completed).length;
+  // "Upcoming plans" = calendar tasks that are not yet ticked off.
   const upcoming = tasks.filter((t) => !t.completed);
   const savedAdvice = habits.filter((h) => h.sourcePostId).length;
   const activeHabits = habits.filter((h) => h.status === "active");
@@ -74,9 +69,11 @@ export default function DashboardPage() {
     ? Math.round(activeHabits.reduce((s, h) => s + h.progress, 0) / activeHabits.length)
     : 0;
 
-  // Study numbers.
+  // ---- Study-mode numbers (each maps to one stat card below) ----
   const today = new Date().toISOString().slice(0, 10);
+  // Total lessons ticked across every study plan.
   const lessonsDone = plans.reduce((n, p) => n + p.lessons.filter((l) => l.completed).length, 0);
+  // Total minutes focused today = sum of today's focus sessions' minutes.
   const focusToday = sessions.filter((s) => s.date === today).reduce((n, s) => n + s.minutes, 0);
 
   const firstName = user?.name?.split(" ")[0] || "student";
@@ -92,7 +89,12 @@ export default function DashboardPage() {
 
       {mode === "study" ? (
         <>
-          {/* ---- STUDY DASHBOARD ---- */}
+          {/* ---- STUDY DASHBOARD (Done by Hong Wei) ----
+              The 4 stat cards, each pulled from the feature that owns it:
+                Study plans      -> number of Study Plans      (Study Plans page)
+                Lessons completed-> ticked lessons across plans (Study Plans page)
+                Focused today    -> minutes from today's sessions (Focus Timer page)
+                Upcoming plans   -> calendar tasks not done yet (Calendar page) */}
           <div className="grid grid-4 mb-24">
             <DashboardStatCard icon={BookIcon} tone="violet" value={plans.length} label="Study plans" />
             <DashboardStatCard icon={CheckIcon} tone="green" value={lessonsDone} label="Lessons completed" />

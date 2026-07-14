@@ -25,6 +25,9 @@ export const ShieldIcon = (p) => (
 export const UpIcon = (p) => (
   <svg {...base(p.size)}><path d="M12 19V5M6 11l6-6 6 6" /></svg>
 );
+export const DownIcon = (p) => (
+  <svg {...base(p.size)}><path d="M12 5v14M6 13l6 6 6-6" /></svg>
+);
 export const PlusIcon = (p) => (
   <svg {...base(p.size)}><path d="M12 5v14M5 12h14" /></svg>
 );
@@ -63,6 +66,15 @@ export const ArrowRightIcon = (p) => (
 );
 export const ChatIcon = (p) => (
   <svg {...base(p.size)}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" /></svg>
+);
+export const ThumbUpIcon = (p) => (
+  <svg {...base(p.size)}><path d="M7 10v11" /><path d="M4 10h3v11H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1Z" /><path d="M7 10l4-7a2 2 0 0 1 3 2l-1 5h5a2 2 0 0 1 2 2.4l-1.4 7A2 2 0 0 1 18.6 21H7Z" /></svg>
+);
+export const ThumbDownIcon = (p) => (
+  <svg {...base(p.size)}><path d="M17 14V3" /><path d="M20 14h-3V3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1Z" /><path d="M17 14l-4 7a2 2 0 0 1-3-2l1-5H6a2 2 0 0 1-2-2.4l1.4-7A2 2 0 0 1 7.4 3H17Z" /></svg>
+);
+export const ReplyIcon = (p) => (
+  <svg {...base(p.size)}><path d="M9 17l-5-5 5-5" /><path d="M4 12h11a5 5 0 0 1 5 5v1" /></svg>
 );
 export const PlayIcon = (p) => (
   <svg {...base(p.size)}><path d="M6 4l14 8-14 8Z" /></svg>

@@ -298,6 +298,55 @@ button.nav-link .chev.open { transform: rotate(180deg); }
 .vote-btn:hover { border-color: var(--primary); color: var(--primary-700); background: var(--primary-050); }
 .vote-count { font-weight: 800; font-size: 15px; }
 
+/* Round profile avatar (initials) on posts + replies — Andrea Ho */
+.user-avatar {
+  display: inline-grid; place-items: center; border-radius: 50%;
+  font-weight: 750; flex-shrink: 0; letter-spacing: -0.01em; line-height: 1;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+/* Small pill buttons under each forum reply (reply / view all) — Andrea Ho */
+.vote-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--muted); font-size: 12.5px; font-weight: 650;
+  font-family: inherit; cursor: pointer; transition: all .15s ease;
+}
+.vote-pill:hover:not(:disabled) { border-color: var(--primary); color: var(--primary-700); background: var(--primary-050); }
+.vote-pill:disabled { opacity: .55; cursor: default; }
+
+/* Reddit-style combined vote pill: [ ↑ score ↓ ] in one segment — Andrea Ho */
+.vote-group {
+  display: inline-flex; align-items: center; gap: 2px;
+  background: var(--surface-3); border-radius: 999px; padding: 2px;
+}
+.vote-arrow {
+  display: grid; place-items: center; width: 28px; height: 28px;
+  border: none; background: none; border-radius: 50%; cursor: pointer;
+  color: var(--muted); transition: color .15s ease, background .15s ease;
+}
+.vote-arrow.up:hover:not(:disabled) { color: var(--primary); background: var(--primary-050); }
+.vote-arrow.down:hover:not(:disabled) { color: var(--red); background: var(--red-050); }
+.vote-arrow:disabled { opacity: .5; cursor: default; }
+.vote-score { min-width: 22px; text-align: center; font-size: 13px; font-weight: 750; }
+
+/* Replies laddered under the question, inside the same card — Andrea Ho.
+   The left border is the "ladder" line connecting the nested replies. */
+.thread {
+  margin: 18px 0 0 14px; padding-left: 16px;
+  border-left: 2px solid var(--border-strong);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.thread-item {
+  position: relative; padding: 12px 14px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
+}
+/* little connector notch from the ladder line to each reply */
+.thread-item::before {
+  content: ""; position: absolute; left: -17px; top: 22px;
+  width: 15px; height: 2px; background: var(--border-strong);
+}
+
 /* ---------- Flow rail (signature visual) ---------- */
 .flow-rail { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
 .flow-step { position: relative; flex: 1; min-width: 150px; padding: 18px 16px; text-align: center; }

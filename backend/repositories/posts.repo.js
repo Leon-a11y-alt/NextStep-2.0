@@ -130,6 +130,12 @@ async function toggleUpvote(id, userId) {
   return findById(id, userId);
 }
 
+// A simple downvote counter for the post (mirrors the reply dislike). — Andrea Ho
+async function incrementDownvote(id, userId) {
+  await pool.query("UPDATE posts SET downvotes = downvotes + 1 WHERE id = ?", [id]);
+  return findById(id, userId);
+}
+
 async function count() {
   const [rows] = await pool.query("SELECT COUNT(*)::int AS n FROM posts");
   return rows[0].n;
@@ -151,6 +157,7 @@ module.exports = {
   update,
   remove,
   toggleUpvote,
+  incrementDownvote,
   count,
   countByStatus,
 };

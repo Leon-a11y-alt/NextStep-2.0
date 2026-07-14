@@ -182,10 +182,13 @@ test("advice can be turned into a habit (add to tracker)", async () => {
   assert.strictEqual(res.body.sourcePostId, 1);
 });
 
-// --- Admin: approving a pending post changes its status ---
-test("admin can approve a pending post", async () => {
+// --- Admin: approving a post sets its status to "approved" ---
+// Create a fresh post first so this doesn't depend on a specific seed id.
+test("admin can approve a post", async () => {
+  const created = mockRes();
+  await postsCtrl.createPost({ body: { title: "Approve me", content: "please", author: "Tester" } }, created);
   const res = mockRes();
-  await adminCtrl.approvePost({ params: { id: "5" } }, res);
+  await adminCtrl.approvePost({ params: { id: String(created.body.id) } }, res);
   assert.strictEqual(res.body.status, "approved");
 });
 
