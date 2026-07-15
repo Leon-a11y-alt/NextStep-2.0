@@ -94,6 +94,28 @@ export const HelpAPI = {
   recommend: (query) => api.post("/api/help/recommend", { query }),
 };
 
+// Gamification: level, XP, streak, badges, growth journey + AI motivation.
+// Everything is derived server-side from the student's real activity
+// (completed tasks/habits, posts, upvotes) — see backend/config/gamification.js.
+export const GamificationAPI = {
+  summary: (userId) => api.get(`/api/gamification?userId=${userId}`),
+};
+
+// Flash Quiz: topics + questions derived from the student's study plans.
+// Returns { fromPlans, topics: [{ id, name, emoji, questions:[{q,options,answer}] }] }.
+export const QuizAPI = {
+  topics: (userId) => api.get(`/api/quiz?userId=${userId}`),
+};
+
+// Speed Sorting Challenge: sets of terms to sort into category bins. Built-in
+// sets match the student's study plans; uploaded sets are parsed from a revision
+// file. Returns { fromPlans, sets: [{ id, title, emoji, source, categories, items }] }.
+export const SortingAPI = {
+  list: (userId) => api.get(`/api/sorting?userId=${userId}`),
+  upload: (payload) => api.post("/api/sorting/upload", payload), // { userId, filename, content }
+  remove: (id, userId) => api.del(`/api/sorting/${id}`, { userId }),
+};
+
 export const AdminAPI = {
   pendingPosts: () => api.get("/api/admin/pending-posts"),
   approvePost: (id) => api.put(`/api/admin/posts/${id}/approve`),
