@@ -133,8 +133,12 @@ async function downvotePost(req, res) {
   const id = Number(req.params.id);
   const existing = await postsRepo.findById(id);
   if (!existing) return res.status(404).json({ error: "Post not found." });
+
   const userId = req.body?.userId ?? req.query?.userId;
-  const updated = await postsRepo.incrementDownvote(id, userId ? Number(userId) : undefined);
+  if (userId === undefined || userId === null || userId === "") {
+    return res.status(400).json({ error: "userId is required." });
+  }
+  const updated = await postsRepo.toggleDownvote(id, userId ? Number(userId) : undefined);
   res.json(updated);
 }
 

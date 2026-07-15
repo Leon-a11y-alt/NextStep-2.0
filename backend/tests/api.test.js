@@ -101,6 +101,24 @@ test("a user can upvote once and then remove that upvote", async () => {
   assert.strictEqual(second.body.upvotes, 0);
 });
 
+test("a user can like a comment once and then remove that like", async () => {
+  const createRes = mockRes();
+  await commentsCtrl.createComment(
+    { body: { postId: 1, userId: 2, author: "Tester", text: "vote me" } },
+    createRes
+  );
+
+  const first = mockRes();
+  await commentsCtrl.upvoteComment({ params: { id: String(createRes.body.id) }, body: { userId: 9 } }, first);
+  assert.strictEqual(first.statusCode, 200);
+  assert.strictEqual(first.body.likes, 1);
+
+  const second = mockRes();
+  await commentsCtrl.upvoteComment({ params: { id: String(createRes.body.id) }, body: { userId: 9 } }, second);
+  assert.strictEqual(second.statusCode, 200);
+  assert.strictEqual(second.body.likes, 0);
+});
+
 test("owner can delete their own post", async () => {
   const createRes = mockRes();
   await postsCtrl.createPost(

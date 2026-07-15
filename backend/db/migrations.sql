@@ -26,6 +26,34 @@ UPDATE posts
  WHERE "forumType" = 'study'
    AND LOWER(title) LIKE '%manage stress%';
 
+-- ---- 1b) Per-user vote tables (Andrea Ho's forum voting) ------------------
+-- Her branch adds these in schema.sql, which only runs via db:init — and that
+-- would wipe the shared database. Created here instead so everyone can get
+-- them with db:migrate. CREATE TABLE IF NOT EXISTS never touches existing rows.
+CREATE TABLE IF NOT EXISTS comment_upvotes (
+  id        SERIAL PRIMARY KEY,
+  commentId INT NOT NULL,
+  userId    INT NOT NULL,
+  createdAt DATE DEFAULT CURRENT_DATE,
+  UNIQUE (commentId, userId)
+);
+
+CREATE TABLE IF NOT EXISTS comment_downvotes (
+  id        SERIAL PRIMARY KEY,
+  commentId INT NOT NULL,
+  userId    INT NOT NULL,
+  createdAt DATE DEFAULT CURRENT_DATE,
+  UNIQUE (commentId, userId)
+);
+
+CREATE TABLE IF NOT EXISTS post_downvotes (
+  id        SERIAL PRIMARY KEY,
+  postId    INT NOT NULL,
+  userId    INT NOT NULL,
+  createdAt DATE DEFAULT CURRENT_DATE,
+  UNIQUE (postId, userId)
+);
+
 -- ---- 2) Study plans: the student's objective ------------------------------
 -- Free-text "what am I trying to achieve" note from the New Study Plan form.
 ALTER TABLE study_plans ADD COLUMN IF NOT EXISTS message TEXT;

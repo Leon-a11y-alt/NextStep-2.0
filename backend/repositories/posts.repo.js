@@ -3,14 +3,28 @@
 const { pool } = require("../config/db");
 
 const inMemoryVotes = new Map();
+const inMemoryDownvotes = new Map();
 
 function getVoteSet(postId) {
-  if (!inMemoryVotes.has(postId)) inMemoryVotes.set(postId, new Set());
+  if (!inMemoryVotes.has(postId)) {
+    inMemoryVotes.set(postId, new Set());
+  }
   return inMemoryVotes.get(postId);
+}
+
+function getDownvoteSet(postId) {
+  if (!inMemoryDownvotes.has(postId)) {
+    inMemoryDownvotes.set(postId, new Set());
+  }
+  return inMemoryDownvotes.get(postId);
 }
 
 function isPostUpvotedByUser(postId, userId) {
   return Boolean(userId && getVoteSet(postId).has(Number(userId)));
+}
+
+function isPostDownvotedByUser(postId, userId) {
+  return Boolean(userId && getDownvoteSet(postId).has(Number(userId)));
 }
 
 // Approved posts with optional forum / category / search filtering, newest first.
@@ -112,16 +126,28 @@ async function toggleUpvote(id, userId) {
   if (!post) return null;
 
   try {
-    const [existing] = await pool.query(
+    const [upvote] = await pool.query(
       "SELECT * FROM post_upvotes WHERE postId = ? AND userId = ? LIMIT 1",
       [id, userId]
     );
 
-    if (existing.length) {
+    // check upvote
+    if (upvote.length) {
       await pool.query("DELETE FROM post_upvotes WHERE postId = ? AND userId = ?", [id, userId]);
       await pool.query("UPDATE posts SET upvotes = GREATEST(upvotes - 1, 0) WHERE id = ?", [id]);
       getVoteSet(id).delete(Number(userId));
     } else {
+      // check if downvote
+      const [downvote] = await pool.query(
+        "SELECT * FROM post_downvotes WHERE postId = ? AND userId = ? LIMIT 1",
+        [id, userId]
+      );
+      if(downvote.length){
+        await pool.query("DELETE FROM post_downvotes WHERE postId = ? AND userId = ?", [id, userId]);
+        await pool.query("UPDATE posts SET downvotes = GREATEST(downvotes - 1, 0) WHERE id = ?", [id]);
+        getDownvoteSet(id).delete(Number(userId));
+      }
+      // add upvote
       await pool.query("INSERT INTO post_upvotes (postId, userId) VALUES (?, ?)", [id, userId]);
       await pool.query("UPDATE posts SET upvotes = upvotes + 1 WHERE id = ?", [id]);
       getVoteSet(id).add(Number(userId));
@@ -140,8 +166,46 @@ async function toggleUpvote(id, userId) {
 }
 
 // A simple downvote counter for the post (mirrors the reply dislike). — Andrea Ho
-async function incrementDownvote(id, userId) {
-  await pool.query("UPDATE posts SET downvotes = downvotes + 1 WHERE id = ?", [id]);
+async function toggleDownvote(id, userId) {
+  const post = await findById(id, userId);
+  if (!post) return null;
+
+  try {
+    const [downvote] = await pool.query(
+      "SELECT * FROM post_downvotes WHERE postId = ? AND userId = ? LIMIT 1",
+      [id, userId]
+    );
+
+    if (downvote.length) {
+      // Remove downvote
+      await pool.query("DELETE FROM post_downvotes WHERE postId = ? AND userId = ?", [id, userId]);
+      await pool.query("UPDATE posts SET downvotes = GREATEST(downvotes - 1, 0) WHERE id = ?", [id]);
+      getDownvoteSet(id).delete(Number(userId));
+    } else {
+      // check upvote
+      const [upvote] = await pool.query(
+        "SELECT * FROM post_upvotes WHERE postId = ? AND userId = ? LIMIT 1",
+        [id, userId]
+      );
+      if(upvote.length){
+        await pool.query("DELETE FROM post_upvotes WHERE postId = ? AND userId = ?", [id, userId]);
+        await pool.query("UPDATE posts SET upvotes = GREATEST(upvotes - 1, 0) WHERE id = ?", [id]);
+        getVoteSet(id).delete(Number(userId));
+      }
+      // Add downvote
+      await pool.query("INSERT INTO post_downvotes (postId, userId) VALUES (?, ?)", [id, userId]);
+      await pool.query("UPDATE posts SET downvotes = downvotes + 1 WHERE id = ?", [id]);
+      getDownvoteSet(id).add(Number(userId));
+    }
+  } catch (err) {
+    const currentVotes = Number(post.downvotes || 0);
+    const [downvote] = await pool.query("SELECT * FROM post_downvotes WHERE postId = ? AND userId = ? LIMIT 1", [id, userId]);
+    const hasVote = downvote.length > 0;
+    const nextVotes = hasVote ? Math.max(currentVotes - 1, 0) : currentVotes + 1;
+
+    await pool.query("UPDATE posts SET downvotes = ? WHERE id = ?", [nextVotes, id]);
+  }
+
   return findById(id, userId);
 }
 
@@ -166,7 +230,7 @@ module.exports = {
   update,
   remove,
   toggleUpvote,
-  incrementDownvote,
+  toggleDownvote,
   count,
   countByStatus,
 };

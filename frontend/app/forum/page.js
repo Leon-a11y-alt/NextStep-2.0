@@ -88,8 +88,8 @@ export default function ForumPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const [votedPosts, setVotedPosts] = useState(new Set());     // one vote per post per session
-  const [votedComments, setVotedComments] = useState(new Set()); // one vote per reply per session
+  // Votes are per-user rows in the database now (Andrea Ho), so clicking again
+  // just toggles your own vote off — no need to track "already voted" here.
   const [replyDrafts, setReplyDrafts] = useState({});          // { postId: draft text }
 
   const isAdmin = user?.role === "admin";
@@ -160,26 +160,25 @@ export default function ForumPage() {
     catch (err) { setError(err.message); }
   }
 
-  // ---- Vote on the POST (up/down), one vote per session ----
+  // ---- Vote on the POST (up/down) ----
   async function votePost(post, kind) {
     if (!user?.id) { setError("Please log in to vote."); return; }
-    if (votedPosts.has(post.id)) return;
     try {
       const updated = kind === "up"
         ? await PostsAPI.upvote(post.id, user.id)
         : await PostsAPI.downvote(post.id, user.id);
       setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-      setVotedPosts((prev) => new Set(prev).add(post.id));
     } catch (err) { setError(err.message); }
   }
 
-  // ---- Vote on a REPLY (up/down), one vote per session ----
+  // ---- Vote on a REPLY (up/down) ----
   async function voteComment(c, kind) {
-    if (votedComments.has(c.id)) return;
+    if (!user?.id) { setError("Please log in to vote."); return; }
     try {
-      const updated = kind === "up" ? await CommentsAPI.like(c.id) : await CommentsAPI.dislike(c.id);
+      const updated = kind === "up"
+        ? await CommentsAPI.like(c.id, user.id)
+        : await CommentsAPI.dislike(c.id, user.id);
       patchComment(updated);
-      setVotedComments((prev) => new Set(prev).add(c.id));
     } catch (err) { setError(err.message); }
   }
 
@@ -314,7 +313,7 @@ export default function ForumPage() {
   }
 
   const canManagePost = (post) => Boolean(user?.id && (user?.role === "admin" || (post.userId && Number(post.userId) === Number(user.id))));
-  const canManageComment = (c) => Boolean(user?.id && c.userId && Number(c.userId) === Number(user.id));
+  const canManageComment = (c) => Boolean(user?.id && (user?.role ==="admin" || (c.userId && Number(c.userId) === Number(user.id))));
 
   return (
     <AppShell
@@ -400,7 +399,7 @@ export default function ForumPage() {
               {/* Post actions: vote, reply count, and the planner button —
                   because good advice is often in the question itself. */}
               <div className="row gap-8 mt-16" style={{ alignItems: "center", flexWrap: "wrap" }}>
-                <VotePill up={post.upvotes} down={post.downvotes} voted={votedPosts.has(post.id)}
+                <VotePill up={post.upvotes} down={post.downvotes}
                   onUp={() => votePost(post, "up")} onDown={() => votePost(post, "down")} />
                 <span className="small muted">{replies.length} {replies.length === 1 ? "reply" : "replies"}</span>
                 <Button size="sm" variant="primary"
@@ -425,7 +424,7 @@ export default function ForumPage() {
                       </div>
                       <div className="small mt-8">{c.text}</div>
                       <div className="row gap-8 mt-8" style={{ flexWrap: "wrap", alignItems: "center" }}>
-                        <VotePill up={c.likes} down={c.dislikes} voted={votedComments.has(c.id)}
+                        <VotePill up={c.likes} down={c.dislikes}
                           onUp={() => voteComment(c, "up")} onDown={() => voteComment(c, "down")} />
                         <Button size="sm" variant="primary"
                           aria-label={`${copy.actionLabel}: reply by ${c.author}`}
