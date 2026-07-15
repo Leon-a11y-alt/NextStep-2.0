@@ -2,13 +2,13 @@
 // Clean, layered structure:
 //   routes/        -> define URL endpoints
 //   controllers/   -> the logic for each endpoint (async)
-//   repositories/  -> data-access layer: SQL queries against MySQL
-//   config/db.js   -> the shared MySQL connection pool
+//   repositories/  -> data-access layer: SQL queries against PostgreSQL
+//   config/db.js   -> the shared Postgres connection pool (Supabase)
 //   db/schema.sql  -> table definitions + seed data (run via `npm run db:init`)
 //   middleware/    -> shared request logging + async/error handling
 //
-// Data now lives in a real MySQL database. Connection settings come from
-// environment variables (see .env / .env.example).
+// Data lives in a PostgreSQL database hosted on Supabase. The connection
+// string comes from DATABASE_URL in .env (see .env.example).
 
 require("dotenv").config();
 const express = require("express");
@@ -26,9 +26,12 @@ const habitsRoutes = require("./routes/habits.routes");
 const calendarRoutes = require("./routes/calendar.routes");
 const adminRoutes = require("./routes/admin.routes");
 const gamificationRoutes = require("./routes/gamification.routes");
-const plansRoutes = require("./routes/plans.routes");
 const quizRoutes = require("./routes/quiz.routes");
 const sortingRoutes = require("./routes/sorting.routes");
+const helpRoutes = require("./routes/help.routes"); // Done by Khaing Khant Zaw
+const plansRoutes = require("./routes/plans.routes"); // Study Plans
+const focusRoutes = require("./routes/focus.routes"); // Focus Timer sessions
+const emailOtpRoutes = require("./routes/emailOtp.routes"); // Sign-up email verification
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -54,22 +57,24 @@ app.use("/api/gamification", gamificationRoutes);
 app.use("/api/plans", plansRoutes);
 app.use("/api/quiz", quizRoutes);
 app.use("/api/sorting", sortingRoutes);
+app.use("/api/help", helpRoutes); // Study Help — done by Khaing Khant Zaw
+app.use("/api/focus-sessions", focusRoutes);
+app.use("/api/email-otp", emailOtpRoutes);
 
 // --- 404 + error handling (must be last) ---
 app.use(notFound);
 app.use(errorHandler);
 
-// Wait for MySQL to accept connections before serving requests. The retry
-// loop matters under docker-compose, where the DB may still be starting up.
-async function waitForDatabase(retries = 10, delayMs = 2000) {
+// Wait for the database to accept connections before serving requests.
+async function waitForDatabase(retries = 5, delayMs = 2000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       await pool.query("SELECT 1");
-      console.log("  Connected to MySQL.");
+      console.log("  Connected to Supabase (PostgreSQL).");
       return;
     } catch (err) {
       if (attempt === retries) throw err;
-      console.log(`  Waiting for MySQL... (${attempt}/${retries})`);
+      console.log(`  Waiting for database... (${attempt}/${retries})`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
@@ -79,8 +84,8 @@ async function start() {
   try {
     await waitForDatabase();
   } catch (err) {
-    console.error("  Could not connect to MySQL:", err.message);
-    console.error("  Is MySQL running and is backend/.env correct? Did you run `npm run db:init`?");
+    console.error("  Could not connect to Supabase:", err.message);
+    console.error("  Is DATABASE_URL set in backend/.env? Did you run `npm run db:init`?");
     process.exit(1);
   }
 

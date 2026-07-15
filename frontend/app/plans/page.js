@@ -1,48 +1,31 @@
 "use client";
-// Study Plan Tracker — a plan is a module (e.g. "Biology") that contains
-// lessons/topics. Ticking lessons off auto-computes the plan's progress.
+// Study Plans — Done by Khaing Khant Zaw
 //
-// BACKEND OWNER TODO:
-//   Implement the PlansAPI endpoints (see lib/api.js + TEAM_HANDOFF.md).
-//   Until then this page falls back to DEMO_PLANS so the UI is fully
-//   clickable — replace nothing here except deleting DEMO_PLANS once
-//   the API works (the try/catch below already prefers the real API).
+// A "study plan" is a module (e.g. "Biology") that holds a list of lessons.
+// Ticking a lesson off auto-computes the plan's progress (done / total).
+//
+// How the data flows (the request path to explain in the demo):
+//   this page  ->  lib/api.js (PlansAPI)  ->  /api/plans route
+//              ->  plans.controller  ->  plans.repo  ->  study_plans + lessons tables (Supabase)
+//
+// Each plan can also be pushed into two other features:
+//   • "Add to calendar"  -> creates a calendar_task linked by planId
+//   • "Focus on this"     -> opens the Focus Timer pre-set to this plan
 import React, { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import Card from "@/components/Card";
 import Button from "@/components/Button";
 import Modal from "@/components/Modal";
 import ApiErrorBanner from "@/components/ApiErrorBanner";
 import { useAuth } from "@/lib/auth";
-import { PlansAPI } from "@/lib/api";
-import { PlusIcon, BookIcon, CheckIcon, ChevronDownIcon } from "@/lib/icons";
+import { PlansAPI, CalendarAPI } from "@/lib/api";
+import { PlusIcon, BookIcon, CheckIcon, ChevronDownIcon, CalendarIcon, ClockIcon } from "@/lib/icons";
 
-// Demo data mirroring what the real API should return.
-const DEMO_PLANS = [
-  {
-    id: 1,
-    name: "Biology",
-    module: "C205 Biology Fundamentals",
-    lessons: [
-      { id: 1, title: "Cell structure & organelles", completed: true },
-      { id: 2, title: "Photosynthesis", completed: true },
-      { id: 3, title: "Cellular respiration", completed: false },
-      { id: 4, title: "Genetics & heredity", completed: false },
-      { id: 5, title: "Ecosystems", completed: false },
-    ],
-  },
-  {
-    id: 2,
-    name: "Operating Systems",
-    module: "C270 Operating Systems",
-    lessons: [
-      { id: 6, title: "Processes & threads", completed: true },
-      { id: 7, title: "CPU scheduling", completed: false },
-      { id: 8, title: "Memory management", completed: false },
-    ],
-  },
-];
+// Today's date as "YYYY-MM-DD" (used to prefill the calendar date picker).
+const todayKey = () => new Date().toISOString().slice(0, 10);
 
+// A plan's progress bar % = completed lessons / total lessons.
 function progressOf(plan) {
   if (!plan.lessons.length) return 0;
   return Math.round((plan.lessons.filter((l) => l.completed).length / plan.lessons.length) * 100);
@@ -50,37 +33,32 @@ function progressOf(plan) {
 
 export default function PlansPage() {
   const { user } = useAuth();
+  const router = useRouter();
   const [plans, setPlans] = useState([]);
-  const [demoMode, setDemoMode] = useState(false);
   const [error, setError] = useState("");
-  const [expanded, setExpanded] = useState(null);
+  const [notice, setNotice] = useState("");
+  const [expanded, setExpanded] = useState(null);      // which plan card is open
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ name: "", module: "" });
-  const [lessonFor, setLessonFor] = useState(null); // plan we're adding a lesson to
+  const [lessonFor, setLessonFor] = useState(null);    // plan we're adding a lesson to
   const [lessonTitle, setLessonTitle] = useState("");
+  const [calendarFor, setCalendarFor] = useState(null); // plan being scheduled onto the calendar
+  const [calForm, setCalForm] = useState({ date: todayKey(), time: "09:00" });
 
+  // Fetch this user's plans (each already comes with its lessons nested).
   async function load() {
-    if (!user) return;
+    if (!user?.id) return;
     setError("");
-    try {
-      setPlans(await PlansAPI.list(user.id));
-      setDemoMode(false);
-    } catch {
-      // API not implemented yet — show demo data so the UI is reviewable.
-      setPlans(DEMO_PLANS);
-      setDemoMode(true);
-    }
+    try { setPlans(await PlansAPI.list(user.id)); }
+    catch (err) { setError(err.message); }
   }
-
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [user]);
 
+  function flash(msg) { setNotice(msg); setTimeout(() => setNotice(""), 3000); }
+
+  // ---- Create a plan ----
   async function createPlan(e) {
     e.preventDefault();
-    if (demoMode) {
-      setPlans((prev) => [...prev, { id: Date.now(), ...form, lessons: [] }]);
-      setShowCreate(false); setForm({ name: "", module: "" });
-      return;
-    }
     try {
       await PlansAPI.create({ userId: user.id, ...form });
       setShowCreate(false); setForm({ name: "", module: "" });
@@ -88,16 +66,10 @@ export default function PlansPage() {
     } catch (err) { setError(err.message); }
   }
 
+  // ---- Add a lesson (bullet topic) to a plan ----
   async function addLesson(e) {
     e.preventDefault();
     if (!lessonTitle.trim()) return;
-    if (demoMode) {
-      setPlans((prev) => prev.map((p) => p.id === lessonFor.id
-        ? { ...p, lessons: [...p.lessons, { id: Date.now(), title: lessonTitle, completed: false }] }
-        : p));
-      setLessonFor(null); setLessonTitle("");
-      return;
-    }
     try {
       await PlansAPI.addLesson(lessonFor.id, { title: lessonTitle });
       setLessonFor(null); setLessonTitle("");
@@ -105,13 +77,8 @@ export default function PlansPage() {
     } catch (err) { setError(err.message); }
   }
 
+  // ---- Tick a lesson done / not-done (updates the plan's progress) ----
   async function toggleLesson(plan, lesson) {
-    if (demoMode) {
-      setPlans((prev) => prev.map((p) => p.id === plan.id
-        ? { ...p, lessons: p.lessons.map((l) => l.id === lesson.id ? { ...l, completed: !l.completed } : l) }
-        : p));
-      return;
-    }
     try {
       await PlansAPI.toggleLesson(plan.id, lesson.id, !lesson.completed);
       load();
@@ -119,8 +86,36 @@ export default function PlansPage() {
   }
 
   async function removePlan(plan) {
-    if (demoMode) { setPlans((prev) => prev.filter((p) => p.id !== plan.id)); return; }
     try { await PlansAPI.remove(plan.id); load(); } catch (err) { setError(err.message); }
+  }
+
+  // ---- Add a plan to the Calendar ----
+  // Creates a calendar_task carrying planId, so the calendar knows it came
+  // from a study plan. Persists to Supabase via CalendarAPI.
+  function openCalendar(plan) {
+    setCalendarFor(plan);
+    setCalForm({ date: todayKey(), time: "09:00" });
+  }
+  async function scheduleToCalendar(e) {
+    e.preventDefault();
+    try {
+      await CalendarAPI.create({
+        userId: user.id,
+        planId: calendarFor.id,
+        title: calendarFor.name,
+        date: calForm.date,
+        time: calForm.time,
+      });
+      setCalendarFor(null);
+      flash(`"${calendarFor.name}" added to your calendar.`);
+    } catch (err) { setError(err.message); }
+  }
+
+  // ---- Focus on a plan ----
+  // Sends the plan id to the Focus Timer via the URL; the timer pre-selects it
+  // so a finished session is logged against this plan.
+  function focusOnPlan(plan) {
+    router.push(`/timer?plan=${plan.id}`);
   }
 
   const totalLessons = plans.reduce((n, p) => n + p.lessons.length, 0);
@@ -129,24 +124,20 @@ export default function PlansPage() {
   return (
     <AppShell
       title="Study Plans"
-      subtitle="Break each module into lessons and track exactly where you are."
+      subtitle="Break each module into lessons, track your progress, and schedule or focus on it."
       actions={<Button variant="primary" onClick={() => setShowCreate(true)}><PlusIcon size={16} /> New study plan</Button>}
     >
       <ApiErrorBanner error={error} onRetry={load} />
-      {demoMode && (
-        <div className="banner mb-16" style={{ background: "var(--amber-050, #fef3c7)", color: "var(--amber, #b45309)", borderColor: "rgba(245,158,11,0.35)" }}>
-          Demo data — the <code>/api/plans</code> endpoints aren&rsquo;t connected yet (see TEAM_HANDOFF.md).
-        </div>
-      )}
+      {notice && <div className="banner mb-16" style={{ background: "var(--green-050)", color: "var(--green)", borderColor: "rgba(16,185,129,0.3)" }}>{notice}</div>}
 
-      {/* Summary */}
+      {/* Summary numbers (same figures the dashboard shows) */}
       <div className="grid grid-3 mb-24">
         <Card className="center"><div className="stat-value" style={{ color: "var(--primary)" }}>{plans.length}</div><div className="stat-label">Study plans</div></Card>
         <Card className="center"><div className="stat-value" style={{ color: "var(--green)" }}>{doneLessons}</div><div className="stat-label">Lessons completed</div></Card>
         <Card className="center"><div className="stat-value" style={{ color: "var(--violet)" }}>{totalLessons - doneLessons}</div><div className="stat-label">Lessons remaining</div></Card>
       </div>
 
-      {/* Plan cards */}
+      {/* One card per plan; click the header to expand its lessons + actions */}
       <div className="stack gap-16">
         {plans.length === 0 && <div className="empty">No study plans yet. Create one for a module you&rsquo;re taking.</div>}
         {plans.map((plan) => {
@@ -198,8 +189,12 @@ export default function PlansPage() {
                       </button>
                     ))}
                   </div>
-                  <div className="row gap-8 mt-16">
+
+                  {/* Actions: connect this plan to the Calendar and the Focus Timer */}
+                  <div className="row gap-8 mt-16" style={{ flexWrap: "wrap" }}>
                     <Button size="sm" onClick={() => setLessonFor(plan)}><PlusIcon size={14} /> Add lesson</Button>
+                    <Button size="sm" variant="primary" onClick={() => openCalendar(plan)}><CalendarIcon size={14} /> Add to calendar</Button>
+                    <Button size="sm" onClick={() => focusOnPlan(plan)}><ClockIcon size={14} /> Focus on this</Button>
                     <Button size="sm" variant="danger" onClick={() => removePlan(plan)}>Delete plan</Button>
                   </div>
                 </div>
@@ -232,6 +227,23 @@ export default function PlansPage() {
             <input className="input" required value={lessonTitle} onChange={(e) => setLessonTitle(e.target.value)} placeholder="e.g. CPU scheduling" />
           </div>
           <Button variant="primary" className="btn-block" type="submit">Add lesson</Button>
+        </form>
+      </Modal>
+
+      {/* Add-to-calendar modal (pick a date + time for this plan) */}
+      <Modal open={!!calendarFor} title={`Schedule "${calendarFor?.name || ""}"`} onClose={() => setCalendarFor(null)}>
+        <form onSubmit={scheduleToCalendar}>
+          <div className="grid grid-2" style={{ gap: 12 }}>
+            <div className="field-group">
+              <label className="field">Date</label>
+              <input className="input" type="date" required value={calForm.date} onChange={(e) => setCalForm({ ...calForm, date: e.target.value })} />
+            </div>
+            <div className="field-group">
+              <label className="field">Time</label>
+              <input className="input" type="time" value={calForm.time} onChange={(e) => setCalForm({ ...calForm, time: e.target.value })} />
+            </div>
+          </div>
+          <Button variant="primary" className="btn-block" type="submit"><CalendarIcon size={15} /> Add to calendar</Button>
         </form>
       </Modal>
     </AppShell>

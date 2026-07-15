@@ -9,5 +9,6 @@ router.post("/", asyncHandler(c.createPost));
 router.put("/:id", asyncHandler(c.updatePost));
 router.delete("/:id", asyncHandler(c.deletePost));
 router.post("/:id/upvote", asyncHandler(c.upvotePost));
+router.post("/:id/downvote", asyncHandler(c.downvotePost)); // Andrea Ho
 
 module.exports = router;

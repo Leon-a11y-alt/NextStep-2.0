@@ -94,6 +94,16 @@ async function upvotePost(req, res) {
   res.json(updated);
 }
 
+// POST /api/posts/:id/downvote  — 👎 the question (Andrea Ho)
+async function downvotePost(req, res) {
+  const id = Number(req.params.id);
+  const existing = await postsRepo.findById(id);
+  if (!existing) return res.status(404).json({ error: "Post not found." });
+  const userId = req.body?.userId ?? req.query?.userId;
+  const updated = await postsRepo.incrementDownvote(id, userId ? Number(userId) : undefined);
+  res.json(updated);
+}
+
 module.exports = {
   getPosts,
   getPost,
@@ -101,4 +111,5 @@ module.exports = {
   updatePost,
   deletePost,
   upvotePost,
+  downvotePost,
 };

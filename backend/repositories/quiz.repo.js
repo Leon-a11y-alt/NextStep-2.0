@@ -5,7 +5,7 @@ const { pool } = require("../config/db");
 // Distinct subjects the student has study plans for.
 async function subjectsForUser(userId) {
   const [rows] = await pool.query(
-    "SELECT DISTINCT name AS subject FROM study_plans WHERE userId = ?",
+    'SELECT DISTINCT name AS subject FROM study_plans WHERE "userId" = ?',
     [Number(userId)]
   );
   return rows.map((r) => r.subject);

@@ -1,71 +1,73 @@
-// Study Plans data-access layer (MySQL). A plan (a subject/module) has many
-// lessons; the controller returns each plan with its lessons nested, matching
-// the shape the frontend PlansAPI already expects.
+// Study plans + lessons data-access layer (PostgreSQL on Supabase).
+// camelCase columns are double-quoted — Postgres lowercases unquoted names.
 const { pool } = require("../config/db");
 
-// All plans (optionally for one user), each with its lessons nested.
-async function find(userId) {
-  const params = [];
-  let where = "";
-  if (userId !== undefined && userId !== null && userId !== "") {
-    where = "WHERE userId = ?";
-    params.push(Number(userId));
-  }
-  const [plans] = await pool.query(`SELECT * FROM study_plans ${where} ORDER BY id ASC`, params);
-  if (!plans.length) return [];
-
-  const ids = plans.map((p) => p.id);
-  const [lessons] = await pool.query(
-    `SELECT * FROM plan_lessons WHERE planId IN (${ids.map(() => "?").join(",")}) ORDER BY id ASC`,
-    ids
+// All of a user's plans, each with its lessons nested (the shape the
+// frontend Study Plans page + dashboard expect).
+async function findByUser(userId) {
+  const [plans] = await pool.query(
+    'SELECT * FROM study_plans WHERE "userId" = ? ORDER BY id',
+    [Number(userId)]
   );
-  const byPlan = {};
-  for (const l of lessons) {
-    (byPlan[l.planId] ||= []).push({ id: l.id, title: l.title, completed: !!l.completed });
-  }
-  return plans.map((p) => ({ ...p, lessons: byPlan[p.id] || [] }));
+  const [lessons] = await pool.query(
+    'SELECT l.* FROM lessons l JOIN study_plans p ON p.id = l."planId" WHERE p."userId" = ? ORDER BY l.id',
+    [Number(userId)]
+  );
+  return plans.map((p) => ({
+    ...p,
+    lessons: lessons.filter((l) => l.planId === p.id),
+  }));
 }
 
-async function findById(id) {
+async function findPlanById(id) {
   const [rows] = await pool.query("SELECT * FROM study_plans WHERE id = ? LIMIT 1", [id]);
   return rows[0] || null;
 }
 
-async function create(data) {
-  const [result] = await pool.query(
-    "INSERT INTO study_plans (userId, name, module, createdAt) VALUES (?, ?, ?, CURRENT_DATE)",
-    [Number(data.userId), data.name, data.module || null]
+// Create a plan. Optionally seed it with `lessons` (an array of bullet-point
+// titles) and mark where it came from (`sourcePostId`) — this is how forum
+// advice becomes a study plan with steps.
+async function createPlan({ userId, name, module, frequency, sourcePostId, createdAt, lessons }) {
+  const [rows] = await pool.query(
+    `INSERT INTO study_plans ("userId", name, module, frequency, "sourcePostId", "createdAt")
+     VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+    [userId, name, module, frequency, sourcePostId, createdAt]
   );
-  const plan = await findById(result.insertId);
-  return { ...plan, lessons: [] };
+  const planId = rows[0].id;
+
+  // Insert each bullet point as a lesson.
+  if (Array.isArray(lessons)) {
+    for (const title of lessons) {
+      if (title && title.trim()) await addLesson(planId, title.trim());
+    }
+  }
+
+  const plan = await findPlanById(planId);
+  const [ls] = await pool.query('SELECT * FROM lessons WHERE "planId" = ? ORDER BY id', [planId]);
+  return { ...plan, lessons: ls };
 }
 
-async function remove(id) {
-  const plan = await findById(id);
+async function removePlan(id) {
+  const plan = await findPlanById(id);
   if (!plan) return null;
-  await pool.query("DELETE FROM plan_lessons WHERE planId = ?", [id]);
+  await pool.query('DELETE FROM lessons WHERE "planId" = ?', [id]); // clear its lessons first
   await pool.query("DELETE FROM study_plans WHERE id = ?", [id]);
   return plan;
 }
 
-async function findLesson(id) {
-  const [rows] = await pool.query("SELECT * FROM plan_lessons WHERE id = ? LIMIT 1", [id]);
-  return rows[0] || null;
-}
-
 async function addLesson(planId, title) {
-  const [result] = await pool.query(
-    "INSERT INTO plan_lessons (planId, title, completed) VALUES (?, ?, 0)",
-    [Number(planId), title]
+  const [rows] = await pool.query(
+    'INSERT INTO lessons ("planId", title, completed) VALUES (?, ?, FALSE) RETURNING id',
+    [planId, title]
   );
-  const l = await findLesson(result.insertId);
-  return { id: l.id, title: l.title, completed: !!l.completed };
+  const [ls] = await pool.query("SELECT * FROM lessons WHERE id = ?", [rows[0].id]);
+  return ls[0];
 }
 
 async function setLessonCompleted(lessonId, completed) {
-  await pool.query("UPDATE plan_lessons SET completed = ? WHERE id = ?", [completed ? 1 : 0, Number(lessonId)]);
-  const l = await findLesson(lessonId);
-  return { id: l.id, title: l.title, completed: !!l.completed };
+  await pool.query("UPDATE lessons SET completed = ? WHERE id = ?", [completed, lessonId]);
+  const [ls] = await pool.query("SELECT * FROM lessons WHERE id = ?", [lessonId]);
+  return ls[0] || null;
 }
 
-module.exports = { find, findById, create, remove, findLesson, addLesson, setLessonCompleted };
+module.exports = { findByUser, findPlanById, createPlan, removePlan, addLesson, setLessonCompleted };

@@ -298,6 +298,55 @@ button.nav-link .chev.open { transform: rotate(180deg); }
 .vote-btn:hover { border-color: var(--primary); color: var(--primary-700); background: var(--primary-050); }
 .vote-count { font-weight: 800; font-size: 15px; }
 
+/* Round profile avatar (initials) on posts + replies — Andrea Ho */
+.user-avatar {
+  display: inline-grid; place-items: center; border-radius: 50%;
+  font-weight: 750; flex-shrink: 0; letter-spacing: -0.01em; line-height: 1;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+/* Small pill buttons under each forum reply (reply / view all) — Andrea Ho */
+.vote-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--muted); font-size: 12.5px; font-weight: 650;
+  font-family: inherit; cursor: pointer; transition: all .15s ease;
+}
+.vote-pill:hover:not(:disabled) { border-color: var(--primary); color: var(--primary-700); background: var(--primary-050); }
+.vote-pill:disabled { opacity: .55; cursor: default; }
+
+/* Reddit-style combined vote pill: [ ↑ score ↓ ] in one segment — Andrea Ho */
+.vote-group {
+  display: inline-flex; align-items: center; gap: 2px;
+  background: var(--surface-3); border-radius: 999px; padding: 2px;
+}
+.vote-arrow {
+  display: grid; place-items: center; width: 28px; height: 28px;
+  border: none; background: none; border-radius: 50%; cursor: pointer;
+  color: var(--muted); transition: color .15s ease, background .15s ease;
+}
+.vote-arrow.up:hover:not(:disabled) { color: var(--primary); background: var(--primary-050); }
+.vote-arrow.down:hover:not(:disabled) { color: var(--red); background: var(--red-050); }
+.vote-arrow:disabled { opacity: .5; cursor: default; }
+.vote-score { min-width: 22px; text-align: center; font-size: 13px; font-weight: 750; }
+
+/* Replies laddered under the question, inside the same card — Andrea Ho.
+   The left border is the "ladder" line connecting the nested replies. */
+.thread {
+  margin: 18px 0 0 14px; padding-left: 16px;
+  border-left: 2px solid var(--border-strong);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.thread-item {
+  position: relative; padding: 12px 14px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
+}
+/* little connector notch from the ladder line to each reply */
+.thread-item::before {
+  content: ""; position: absolute; left: -17px; top: 22px;
+  width: 15px; height: 2px; background: var(--border-strong);
+}
+
 /* ---------- Flow rail (signature visual) ---------- */
 .flow-rail { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
 .flow-step { position: relative; flex: 1; min-width: 150px; padding: 18px 16px; text-align: center; }
@@ -363,8 +412,29 @@ html[data-mode="habit"] body {
   font-size: 11.5px; padding: 5px 8px; border-radius: 8px; background: var(--primary-050);
   color: var(--primary-700); font-weight: 650; cursor: pointer; line-height: 1.2;
 }
+/* Colour tasks by source — fixed colours so study is always purple and habit
+   always orange, in both the study and habit calendars (WK). */
+.cal-chip.plan  { background: rgba(124, 58, 237, 0.14); color: #6d28d9; }
+.cal-chip.habit { background: rgba(234, 88, 12, 0.14);  color: #c2410c; }
 .cal-chip.done { background: var(--green-050); color: var(--green); text-decoration: line-through; opacity: .8; }
-@media (max-width: 860px) { .cal-grid { grid-template-columns: 1fr; } .cal-day { min-height: auto; } }
+
+/* Little legend swatches */
+.cal-swatch { width: 12px; height: 12px; border-radius: 4px; display: inline-block; }
+.cal-swatch.plan  { background: #7c3aed; }
+.cal-swatch.habit { background: #ea580c; }
+.cal-swatch.done  { background: var(--green); }
+
+/* Month view: shorter cells (up to 6 rows) + dim the days outside the month (WK) */
+.cal-grid.month .cal-day { min-height: 96px; padding: 8px; }
+.cal-grid.month .cal-day.outside { opacity: .45; }
+.cal-grid.month .cal-daynum { justify-content: flex-start; }
+
+@media (max-width: 860px) {
+  .cal-grid { grid-template-columns: 1fr; }
+  .cal-day { min-height: auto; }
+  .cal-grid.month { grid-template-columns: repeat(7, 1fr); }
+  .cal-grid.month .cal-day { min-height: 64px; }
+}
 
 /* ---------- Auth (login / register) screen ---------- */
 .auth-page {
@@ -510,6 +580,38 @@ html[data-mode="habit"] body {
   100% { box-shadow: inset 0 0 0 1px var(--primary-100), 0 0 0 16px transparent; }
 }
 .gm-flame-anim { animation: gm-flicker 2.4s ease-in-out infinite; }
+
+/* ---------- NetAcad-style course cards (Study Help) ---------- */
+.nc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+.nc-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden; box-shadow: var(--shadow-sm); display: flex; flex-direction: column;
+  transition: box-shadow .2s ease, transform .2s ease;
+}
+.nc-card:hover { box-shadow: var(--shadow); transform: translateY(-3px); }
+.nc-banner { position: relative; height: 110px; display: grid; place-items: center; color: rgba(255, 255, 255, 0.85); }
+.nc-level {
+  position: absolute; top: 10px; left: 10px; background: #16a34a; color: #fff;
+  font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  padding: 4px 10px; border-radius: 6px;
+}
+.nc-match {
+  position: absolute; top: 10px; right: 10px; background: rgba(255, 255, 255, 0.92);
+  color: #1b2033; font-size: 12px; font-weight: 750; padding: 4px 10px; border-radius: 999px;
+}
+.nc-body { padding: 16px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.nc-provider { font-size: 13px; font-weight: 700; }
+.nc-meta { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.nc-title { font-size: 16px; font-weight: 750; letter-spacing: -0.015em; }
+.nc-desc { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.nc-why {
+  font-size: 12.5px; line-height: 1.45; background: var(--primary-050);
+  color: var(--primary-700); padding: 8px 10px; border-radius: 9px;
+}
+.nc-foot {
+  margin-top: auto; display: flex; justify-content: space-between; align-items: center;
+  font-size: 12.5px; color: var(--muted); padding-top: 8px; border-top: 1px solid var(--border);
+}
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {

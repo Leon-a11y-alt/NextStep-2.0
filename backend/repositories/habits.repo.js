@@ -1,4 +1,5 @@
-// Habits / study-plan data-access layer (MySQL).
+// Habits / study-plan data-access layer (PostgreSQL on Supabase).
+// camelCase columns are double-quoted — Postgres lowercases unquoted names.
 const { pool } = require("../config/db");
 
 // All habits, or just one user's habits. Newest first.
@@ -8,7 +9,7 @@ async function find(userId) {
     return rows;
   }
   const [rows] = await pool.query(
-    "SELECT * FROM habits WHERE userId = ? ORDER BY id DESC",
+    'SELECT * FROM habits WHERE "userId" = ? ORDER BY id DESC',
     [Number(userId)]
   );
   return rows;
@@ -20,12 +21,12 @@ async function findById(id) {
 }
 
 async function create(data) {
-  const [result] = await pool.query(
-    `INSERT INTO habits (userId, sourcePostId, name, frequency, status, progress, createdAt)
-     VALUES (?, ?, ?, ?, 'active', 0, ?)`,
+  const [rows] = await pool.query(
+    `INSERT INTO habits ("userId", "sourcePostId", name, frequency, status, progress, "createdAt")
+     VALUES (?, ?, ?, ?, 'active', 0, ?) RETURNING id`,
     [data.userId, data.sourcePostId, data.name, data.frequency, data.createdAt]
   );
-  return findById(result.insertId);
+  return findById(rows[0].id);
 }
 
 async function update(id, fields) {
@@ -34,7 +35,7 @@ async function update(id, fields) {
   const params = [];
   for (const key of allowed) {
     if (fields[key] !== undefined) {
-      sets.push(`${key} = ?`);
+      sets.push(`"${key}" = ?`);
       params.push(fields[key]);
     }
   }
@@ -53,13 +54,13 @@ async function remove(id) {
 }
 
 async function count() {
-  const [rows] = await pool.query("SELECT COUNT(*) AS n FROM habits");
+  const [rows] = await pool.query("SELECT COUNT(*)::int AS n FROM habits");
   return rows[0].n;
 }
 
 async function countByStatus(status) {
   const [rows] = await pool.query(
-    "SELECT COUNT(*) AS n FROM habits WHERE status = ?",
+    "SELECT COUNT(*)::int AS n FROM habits WHERE status = ?",
     [status]
   );
   return rows[0].n;

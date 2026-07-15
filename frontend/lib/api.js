@@ -14,7 +14,9 @@ async function request(path, options = {}) {
 
   if (!res.ok) {
     const message = (data && data.error) || `Request failed (${res.status})`;
-    throw new Error(message);
+    const err = new Error(message);
+    err.status = res.status; // so callers can special-case e.g. 503 (not configured)
+    throw err;
   }
   return data;
 }
@@ -23,6 +25,7 @@ export const api = {
   get: (path) => request(path),
   post: (path, body) => request(path, { method: "POST", body: JSON.stringify(body) }),
   put: (path, body) => request(path, { method: "PUT", body: JSON.stringify(body || {}) }),
+  patch: (path, body) => request(path, { method: "PATCH", body: JSON.stringify(body || {}) }),
   del: (path, body) => request(path, { method: "DELETE", body: JSON.stringify(body || {}) }),
   baseUrl: API_URL,
 };
@@ -31,6 +34,14 @@ export const api = {
 export const AuthAPI = {
   login: (email, password) => api.post("/api/auth/login", { email, password }),
   register: (payload) => api.post("/api/auth/register", payload),
+};
+
+// Sign-up email verification (OTP). send() returns a signed token; verify()
+// checks the code against it. A 503 means email isn't configured -> the
+// sign-up page falls back to an on-screen demo code.
+export const EmailOtpAPI = {
+  send: (email) => api.post("/api/email-otp/send", { email }),
+  verify: (email, code, token) => api.post("/api/email-otp/verify", { email, code, token }),
 };
 
 export const PostsAPI = {
@@ -46,13 +57,17 @@ export const PostsAPI = {
   update: (id, payload) => api.put(`/api/posts/${id}`, payload),
   remove: (id, userId, role) => api.del(`/api/posts/${id}`, { userId, role }),
   upvote: (id, userId) => api.post(`/api/posts/${id}/upvote`, { userId }),
+  downvote: (id, userId) => api.post(`/api/posts/${id}/downvote`, { userId }), // 👎 the question — Andrea Ho
 };
 
 export const CommentsAPI = {
   list: (postId) => api.get(`/api/comments?postId=${postId}`),
+  all: () => api.get("/api/comments"),          // every comment (grouped by post on the forum) — Andrea Ho
   create: (payload) => api.post("/api/comments", payload),
   update: (id, payload) => api.put(`/api/comments/${id}`, payload),
   remove: (id, userId) => api.del(`/api/comments/${id}`, { userId }),
+  like: (id) => api.post(`/api/comments/${id}/like`, {}),       // 👍 advice — Done by Andrea Ho
+  dislike: (id) => api.post(`/api/comments/${id}/dislike`, {}), // 👎 advice — Done by Andrea Ho
 };
 
 export const HabitsAPI = {
@@ -117,6 +132,12 @@ export const SortingAPI = {
 };
 
 export const AdminAPI = {
+  // `me` is the logged-in admin's id, so the API can flag their own row (isSelf)
+  // and refuse self-ban / self-delete / self-demote on the server.
+  users: (me) => api.get(`/api/admin/users${me ? `?me=${me}` : ""}`),
+  setRole: (id, role, me) => api.patch(`/api/admin/users/${id}/role`, { role, me }),
+  toggleBan: (id, me) => api.post(`/api/admin/users/${id}/ban`, { me }),
+  deleteUser: (id, me) => api.del(`/api/admin/users/${id}`, { me }),
   pendingPosts: () => api.get("/api/admin/pending-posts"),
   approvePost: (id) => api.put(`/api/admin/posts/${id}/approve`),
   rejectPost: (id) => api.put(`/api/admin/posts/${id}/reject`),

@@ -1,47 +1,56 @@
-// Study Plans CRUD. Backed by the MySQL study_plans + plan_lessons tables.
-// Fulfils the PlansAPI contract the frontend already calls (see lib/api.js).
+// Study Plans: a plan (module) that contains lessons you tick off.
+// Backed by the study_plans + lessons tables.
 const plansRepo = require("../repositories/plans.repo");
 
-// GET /api/plans?userId=
+// GET /api/plans?userId=1  -> plans with nested lessons
 async function getPlans(req, res) {
-  const { userId } = req.query;
-  res.json(await plansRepo.find(userId));
+  const plans = await plansRepo.findByUser(req.query.userId);
+  res.json(plans);
 }
 
-// POST /api/plans  — { userId, name, module }
+// POST /api/plans  { userId, name, module, frequency?, sourcePostId?, lessons? }
+// lessons is an optional array of bullet-point titles (used by the forum's
+// "Add to my study planner" flow).
 async function createPlan(req, res) {
-  const { userId, name, module } = req.body;
-  if (!name) return res.status(400).json({ error: "Subject name is required." });
-  const plan = await plansRepo.create({ userId: userId || 1, name, module });
+  const { userId, name, module, frequency, sourcePostId, lessons } = req.body;
+  if (!userId || !name) {
+    return res.status(400).json({ error: "userId and name are required." });
+  }
+  const plan = await plansRepo.createPlan({
+    userId: Number(userId),
+    name,
+    module: module || null,
+    frequency: frequency || null,
+    sourcePostId: sourcePostId ? Number(sourcePostId) : null,
+    lessons: Array.isArray(lessons) ? lessons : [],
+    createdAt: new Date().toISOString().slice(0, 10),
+  });
   res.status(201).json(plan);
 }
 
 // DELETE /api/plans/:id
 async function deletePlan(req, res) {
-  const removed = await plansRepo.remove(Number(req.params.id));
-  if (!removed) return res.status(404).json({ error: "Study plan not found." });
-  res.json({ message: "Study plan deleted.", plan: removed });
+  const removed = await plansRepo.removePlan(Number(req.params.id));
+  if (!removed) return res.status(404).json({ error: "Plan not found." });
+  res.json({ message: "Plan deleted.", id: Number(req.params.id) });
 }
 
-// POST /api/plans/:planId/lessons  — { title }
+// POST /api/plans/:id/lessons  { title }
 async function addLesson(req, res) {
-  const planId = Number(req.params.planId);
-  const plan = await plansRepo.findById(planId);
-  if (!plan) return res.status(404).json({ error: "Study plan not found." });
-
   const { title } = req.body;
-  if (!title) return res.status(400).json({ error: "Lesson title is required." });
-  res.status(201).json(await plansRepo.addLesson(planId, title));
+  if (!title) return res.status(400).json({ error: "title is required." });
+  const lesson = await plansRepo.addLesson(Number(req.params.id), title);
+  res.status(201).json(lesson);
 }
 
-// PUT /api/plans/:planId/lessons/:lessonId  — { completed }
-async function toggleLesson(req, res) {
-  const lessonId = Number(req.params.lessonId);
-  const lesson = await plansRepo.findLesson(lessonId);
+// PUT /api/plans/:id/lessons/:lessonId  { completed }
+async function updateLesson(req, res) {
+  const lesson = await plansRepo.setLessonCompleted(
+    Number(req.params.lessonId),
+    Boolean(req.body.completed)
+  );
   if (!lesson) return res.status(404).json({ error: "Lesson not found." });
-
-  const { completed } = req.body;
-  res.json(await plansRepo.setLessonCompleted(lessonId, !!completed));
+  res.json(lesson);
 }
 
-module.exports = { getPlans, createPlan, deletePlan, addLesson, toggleLesson };
+module.exports = { getPlans, createPlan, deletePlan, addLesson, updateLesson };

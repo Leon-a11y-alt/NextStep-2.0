@@ -1,4 +1,5 @@
-// Comments data-access layer (MySQL).
+// Comments data-access layer (PostgreSQL on Supabase).
+// camelCase columns are double-quoted — Postgres lowercases unquoted names.
 const { pool } = require("../config/db");
 
 // All comments, or just those for a given post when postId is provided.
@@ -8,7 +9,7 @@ async function find(postId) {
     return rows;
   }
   const [rows] = await pool.query(
-    "SELECT * FROM comments WHERE postId = ? ORDER BY id",
+    'SELECT * FROM comments WHERE "postId" = ? ORDER BY id',
     [Number(postId)]
   );
   return rows;
@@ -20,12 +21,12 @@ async function findById(id) {
 }
 
 async function create(data) {
-  const [result] = await pool.query(
-    `INSERT INTO comments (postId, userId, author, authorYear, \`text\`, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+  const [rows] = await pool.query(
+    `INSERT INTO comments ("postId", "userId", author, "authorYear", text, "createdAt")
+     VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
     [data.postId, data.userId, data.author, data.authorYear, data.text, data.createdAt]
   );
-  return findById(result.insertId);
+  return findById(rows[0].id);
 }
 
 async function update(id, fields) {
@@ -52,9 +53,16 @@ async function remove(id) {
   return comment;
 }
 
+// Add one like or one dislike to a comment. `field` is chosen by the
+// controller (never raw user input), so it is safe to inline here.
+async function vote(id, field) {
+  await pool.query(`UPDATE comments SET ${field} = ${field} + 1 WHERE id = ?`, [id]);
+  return findById(id);
+}
+
 async function count() {
-  const [rows] = await pool.query("SELECT COUNT(*) AS n FROM comments");
+  const [rows] = await pool.query("SELECT COUNT(*)::int AS n FROM comments");
   return rows[0].n;
 }
 
-module.exports = { find, findById, create, update, remove, count };
+module.exports = { find, findById, create, update, remove, vote, count };

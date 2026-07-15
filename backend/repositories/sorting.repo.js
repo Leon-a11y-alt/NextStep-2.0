@@ -7,7 +7,7 @@ const { pool } = require("../config/db");
 // built-in sets to offer, keeping the game tied to their coursework.
 async function planSubjects(userId) {
   const [rows] = await pool.query(
-    "SELECT DISTINCT name AS subject FROM study_plans WHERE userId = ?",
+    'SELECT DISTINCT name AS subject FROM study_plans WHERE "userId" = ?',
     [Number(userId)]
   );
   return rows.map((r) => r.subject);
@@ -34,7 +34,7 @@ async function builtinSets(subjects) {
 
 async function uploadSets(userId) {
   const [rows] = await pool.query(
-    "SELECT * FROM sorting_sets WHERE source = 'upload' AND userId = ? ORDER BY id DESC",
+    'SELECT * FROM sorting_sets WHERE source = \'upload\' AND "userId" = ? ORDER BY id DESC',
     [Number(userId)]
   );
   return rows;
@@ -44,7 +44,7 @@ async function itemsForSets(setIds) {
   if (!setIds.length) return [];
   const placeholders = setIds.map(() => "?").join(",");
   const [rows] = await pool.query(
-    `SELECT setId, term, category FROM sorting_items WHERE setId IN (${placeholders}) ORDER BY id ASC`,
+    `SELECT "setId", term, category FROM sorting_items WHERE "setId" IN (${placeholders}) ORDER BY id ASC`,
     setIds
   );
   return rows;
@@ -57,20 +57,24 @@ async function findSet(id) {
 
 // Create an upload set + its items in one go.
 async function createUploadSet({ userId, title, filename, items }) {
-  const [result] = await pool.query(
-    "INSERT INTO sorting_sets (userId, title, subject, source, filename, createdAt) VALUES (?, ?, NULL, 'upload', ?, CURRENT_DATE)",
+  const [rows] = await pool.query(
+    'INSERT INTO sorting_sets ("userId", title, subject, source, filename, "createdAt") ' +
+      "VALUES (?, ?, NULL, 'upload', ?, CURRENT_DATE) RETURNING id",
     [Number(userId), title, filename || null]
   );
-  const setId = result.insertId;
-  const values = items.map((it) => [setId, it.term, it.category]);
-  await pool.query("INSERT INTO sorting_items (setId, term, category) VALUES ?", [values]);
+  const setId = rows[0].id;
+
+  const placeholders = items.map(() => "(?, ?, ?)").join(", ");
+  const values = items.flatMap((it) => [setId, it.term, it.category]);
+  await pool.query(`INSERT INTO sorting_items ("setId", term, category) VALUES ${placeholders}`, values);
+
   return findSet(setId);
 }
 
 async function removeSet(id) {
   const set = await findSet(id);
   if (!set) return null;
-  await pool.query("DELETE FROM sorting_items WHERE setId = ?", [id]);
+  await pool.query('DELETE FROM sorting_items WHERE "setId" = ?', [id]);
   await pool.query("DELETE FROM sorting_sets WHERE id = ?", [id]);
   return set;
 }

@@ -14,7 +14,7 @@ const { pool } = require("../config/db");
 async function completedTaskDates(userId) {
   const [rows] = await pool.query(
     `SELECT DISTINCT date FROM calendar_tasks
-     WHERE userId = ? AND completed = 1
+     WHERE "userId" = ? AND completed = TRUE
      ORDER BY date ASC`,
     [Number(userId)]
   );
@@ -23,7 +23,7 @@ async function completedTaskDates(userId) {
 
 async function completedTaskCount(userId) {
   const [rows] = await pool.query(
-    "SELECT COUNT(*) AS n FROM calendar_tasks WHERE userId = ? AND completed = 1",
+    'SELECT COUNT(*) AS n FROM calendar_tasks WHERE "userId" = ? AND completed = TRUE',
     [Number(userId)]
   );
   return rows[0].n;
@@ -32,7 +32,7 @@ async function completedTaskCount(userId) {
 // Every habit row for the user (small set — computed in JS for clarity).
 async function habits(userId) {
   const [rows] = await pool.query(
-    "SELECT status, progress, createdAt FROM habits WHERE userId = ?",
+    'SELECT status, progress, "createdAt" FROM habits WHERE "userId" = ?',
     [Number(userId)]
   );
   return rows;
@@ -41,9 +41,9 @@ async function habits(userId) {
 // Approved posts the user authored, with the upvotes each earned.
 async function approvedPosts(userId) {
   const [rows] = await pool.query(
-    `SELECT upvotes, createdAt FROM posts
-     WHERE userId = ? AND status = 'approved'
-     ORDER BY createdAt ASC`,
+    `SELECT upvotes, "createdAt" FROM posts
+     WHERE "userId" = ? AND status = 'approved'
+     ORDER BY "createdAt" ASC`,
     [Number(userId)]
   );
   return rows;
@@ -51,7 +51,7 @@ async function approvedPosts(userId) {
 
 async function commentCount(userId) {
   const [rows] = await pool.query(
-    "SELECT COUNT(*) AS n FROM comments WHERE userId = ?",
+    'SELECT COUNT(*) AS n FROM comments WHERE "userId" = ?',
     [Number(userId)]
   );
   return rows[0].n;

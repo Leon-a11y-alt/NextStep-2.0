@@ -1,4 +1,5 @@
-// Forum posts data-access layer (MySQL).
+// Forum posts data-access layer (PostgreSQL on Supabase).
+// camelCase columns are double-quoted — Postgres lowercases unquoted names.
 const { pool } = require("../config/db");
 
 const inMemoryVotes = new Map();
@@ -54,9 +55,9 @@ async function findByStatus(status) {
 }
 
 async function create(data) {
-  const [result] = await pool.query(
-    `INSERT INTO posts (userId, author, authorYear, title, category, content, suggestedAction, status, upvotes, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+  const [rows] = await pool.query(
+    `INSERT INTO posts ("userId", author, "authorYear", title, category, content, "suggestedAction", status, upvotes, "createdAt")
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?) RETURNING id`,
     [
       data.userId,
       data.author,
@@ -69,7 +70,7 @@ async function create(data) {
       data.createdAt,
     ]
   );
-  return findById(result.insertId);
+  return findById(rows[0].id);
 }
 
 // Update only the fields provided (undefined fields are ignored).
@@ -79,7 +80,7 @@ async function update(id, fields) {
   const params = [];
   for (const key of allowed) {
     if (fields[key] !== undefined) {
-      sets.push(`${key} = ?`);
+      sets.push(`"${key}" = ?`);
       params.push(fields[key]);
     }
   }
@@ -129,14 +130,20 @@ async function toggleUpvote(id, userId) {
   return findById(id, userId);
 }
 
+// A simple downvote counter for the post (mirrors the reply dislike). — Andrea Ho
+async function incrementDownvote(id, userId) {
+  await pool.query("UPDATE posts SET downvotes = downvotes + 1 WHERE id = ?", [id]);
+  return findById(id, userId);
+}
+
 async function count() {
-  const [rows] = await pool.query("SELECT COUNT(*) AS n FROM posts");
+  const [rows] = await pool.query("SELECT COUNT(*)::int AS n FROM posts");
   return rows[0].n;
 }
 
 async function countByStatus(status) {
   const [rows] = await pool.query(
-    "SELECT COUNT(*) AS n FROM posts WHERE status = ?",
+    "SELECT COUNT(*)::int AS n FROM posts WHERE status = ?",
     [status]
   );
   return rows[0].n;
@@ -150,6 +157,7 @@ module.exports = {
   update,
   remove,
   toggleUpvote,
+  incrementDownvote,
   count,
   countByStatus,
 };
