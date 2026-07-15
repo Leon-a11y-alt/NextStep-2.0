@@ -20,6 +20,8 @@ DROP TABLE IF EXISTS lessons CASCADE;
 DROP TABLE IF EXISTS study_plans CASCADE;
 DROP TABLE IF EXISTS calendar_tasks CASCADE;
 DROP TABLE IF EXISTS comments CASCADE;
+DROP TABLE IF EXISTS comment_upvotes CASCADE;
+DROP TABLE IF EXISTS comment_downvotes CASCADE;
 DROP TABLE IF EXISTS reports CASCADE;
 DROP TABLE IF EXISTS habits CASCADE;
 DROP TABLE IF EXISTS admin_requests CASCADE;
@@ -67,6 +69,24 @@ CREATE TABLE comments (
   likes        INT NOT NULL DEFAULT 0,   -- 👍 on a piece of advice
   dislikes     INT NOT NULL DEFAULT 0,   -- 👎 on a piece of advice
   "createdAt"  DATE
+);
+
+-- One row per user per comment; mirrors the forum post vote tables so likes
+-- and dislikes can be toggled on/off per user.
+CREATE TABLE comment_upvotes (
+  id        SERIAL PRIMARY KEY,
+  commentId INT NOT NULL,
+  userId    INT NOT NULL,
+  createdAt DATE DEFAULT CURRENT_DATE,
+  UNIQUE (commentId, userId)
+);
+
+CREATE TABLE comment_downvotes (
+  id        SERIAL PRIMARY KEY,
+  commentId INT NOT NULL,
+  userId    INT NOT NULL,
+  createdAt DATE DEFAULT CURRENT_DATE,
+  UNIQUE (commentId, userId)
 );
 
 -- One row per user per post; columns intentionally unquoted (they fold to

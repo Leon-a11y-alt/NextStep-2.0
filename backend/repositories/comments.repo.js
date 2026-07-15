@@ -2,6 +2,31 @@
 // camelCase columns are double-quoted — Postgres lowercases unquoted names.
 const { pool } = require("../config/db");
 
+const inMemoryLikes = new Map();
+const inMemoryDislikes = new Map();
+
+function getLikeSet(commentId) {
+  if (!inMemoryLikes.has(commentId)) {
+    inMemoryLikes.set(commentId, new Set());
+  }
+  return inMemoryLikes.get(commentId);
+}
+
+function getDislikeSet(commentId) {
+  if (!inMemoryDislikes.has(commentId)) {
+    inMemoryDislikes.set(commentId, new Set());
+  }
+  return inMemoryDislikes.get(commentId);
+}
+
+function isCommentLikedByUser(commentId, userId) {
+  return Boolean(userId && getLikeSet(commentId).has(Number(userId)));
+}
+
+function isCommentDislikedByUser(commentId, userId) {
+  return Boolean(userId && getDislikeSet(commentId).has(Number(userId)));
+}
+
 // All comments, or just those for a given post when postId is provided.
 async function find(postId) {
   if (postId === undefined || postId === null || postId === "") {
@@ -53,10 +78,85 @@ async function remove(id) {
   return comment;
 }
 
-// Add one like or one dislike to a comment. `field` is chosen by the
-// controller (never raw user input), so it is safe to inline here.
-async function vote(id, field) {
-  await pool.query(`UPDATE comments SET ${field} = ${field} + 1 WHERE id = ?`, [id]);
+async function toggleLike(id, userId) {
+  const comment = await findById(id);
+  if (!comment) return null;
+
+  try {
+    const [upvote] = await pool.query(
+      "SELECT * FROM comment_upvotes WHERE commentId = ? AND userId = ? LIMIT 1",
+      [id, userId]
+    );
+
+    if (upvote.length) {
+      await pool.query("DELETE FROM comment_upvotes WHERE commentId = ? AND userId = ?", [id, userId]);
+      await pool.query("UPDATE comments SET upvotes = GREATEST(upvotes - 1, 0) WHERE id = ?", [id]);
+      getLikeSet(id).delete(Number(userId));
+    } else {
+      const [downvote] = await pool.query(
+        "SELECT * FROM comment_downvotes WHERE commentId = ? AND userId = ? LIMIT 1",
+        [id, userId]
+      );
+      if (downvote.length) {
+        await pool.query("DELETE FROM comment_downvotes WHERE commentId = ? AND userId = ?", [id, userId]);
+        await pool.query("UPDATE comments SET downvotes = GREATEST(downvotes - 1, 0) WHERE id = ?", [id]);
+        getDislikeSet(id).delete(Number(userId));
+      }
+      await pool.query("INSERT INTO comment_upvotes (commentId, userId) VALUES (?, ?)", [id, userId]);
+      await pool.query("UPDATE comments SET upvotes = upvotes + 1 WHERE id = ?", [id]);
+      getLikeSet(id).add(Number(userId));
+    }
+  } catch (err) {
+    const currentVotes = Number(comment.upvotes || 0);
+    const hasVote = isCommentLikedByUser(id, userId);
+    const nextVotes = hasVote ? Math.max(currentVotes - 1, 0) : currentVotes + 1;
+    const voteSet = getLikeSet(id);
+    if (hasVote) voteSet.delete(Number(userId));
+    else voteSet.add(Number(userId));
+    await pool.query("UPDATE comments SET upvotes = ? WHERE id = ?", [nextVotes, id]);
+  }
+
+  return findById(id);
+}
+
+async function toggleDislike(id, userId) {
+  const comment = await findById(id);
+  if (!comment) return null;
+
+  try {
+    const [downvote] = await pool.query(
+      "SELECT * FROM comment_downvotes WHERE commentId = ? AND userId = ? LIMIT 1",
+      [id, userId]
+    );
+
+    if (downvote.length) {
+      await pool.query("DELETE FROM comment_downvotes WHERE commentId = ? AND userId = ?", [id, userId]);
+      await pool.query("UPDATE comments SET downvotes = GREATEST(downvotes - 1, 0) WHERE id = ?", [id]);
+      getDislikeSet(id).delete(Number(userId));
+    } else {
+      const [upvote] = await pool.query(
+        "SELECT * FROM comment_upvotes WHERE commentId = ? AND userId = ? LIMIT 1",
+        [id, userId]
+      );
+      if (upvote.length) {
+        await pool.query("DELETE FROM comment_upvotes WHERE commentId = ? AND userId = ?", [id, userId]);
+        await pool.query("UPDATE comments SET upvotes = GREATEST(upvotes - 1, 0) WHERE id = ?", [id]);
+        getLikeSet(id).delete(Number(userId));
+      }
+      await pool.query("INSERT INTO comment_downvotes (commentId, userId) VALUES (?, ?)", [id, userId]);
+      await pool.query("UPDATE comments SET downvotes = downvotes + 1 WHERE id = ?", [id]);
+      getDislikeSet(id).add(Number(userId));
+    }
+  } catch (err) {
+    const currentVotes = Number(comment.downvotes || 0);
+    const hasVote = isCommentDislikedByUser(id, userId);
+    const nextVotes = hasVote ? Math.max(currentVotes - 1, 0) : currentVotes + 1;
+    const voteSet = getDislikeSet(id);
+    if (hasVote) voteSet.delete(Number(userId));
+    else voteSet.add(Number(userId));
+    await pool.query("UPDATE comments SET downvotes = ? WHERE id = ?", [nextVotes, id]);
+  }
+
   return findById(id);
 }
 
@@ -65,4 +165,4 @@ async function count() {
   return rows[0].n;
 }
 
-module.exports = { find, findById, create, update, remove, vote, count };
+module.exports = { find, findById, create, update, remove, toggleLike, toggleDislike, count };

@@ -116,8 +116,11 @@ export default function ForumPage() {
 
   // ---- Vote on a REPLY (up/down) ----
   async function voteComment(c, kind) {
+    if (!user?.id) { setError("Please log in to vote."); return; }
     try {
-      const updated = kind === "up" ? await CommentsAPI.like(c.id) : await CommentsAPI.dislike(c.id);
+      const updated = kind === "up"
+        ? await CommentsAPI.like(c.id, user.id)
+        : await CommentsAPI.dislike(c.id, user.id);
       patchComment(updated);
     } catch (err) { setError(err.message); }
   }

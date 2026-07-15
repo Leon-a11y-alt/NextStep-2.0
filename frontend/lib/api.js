@@ -66,8 +66,8 @@ export const CommentsAPI = {
   create: (payload) => api.post("/api/comments", payload),
   update: (id, payload) => api.put(`/api/comments/${id}`, payload),
   remove: (id, userId) => api.del(`/api/comments/${id}`, { userId }),
-  like: (id) => api.post(`/api/comments/${id}/like`, {}),       // 👍 advice — Done by Andrea Ho
-  dislike: (id) => api.post(`/api/comments/${id}/dislike`, {}), // 👎 advice — Done by Andrea Ho
+  like: (id, userId) => api.post(`/api/comments/${id}/like`, { userId }),       // 👍 advice — Done by Andrea Ho
+  dislike: (id, userId) => api.post(`/api/comments/${id}/dislike`, { userId }), // 👎 advice — Done by Andrea Ho
 };
 
 export const HabitsAPI = {

@@ -64,18 +64,28 @@ async function deleteComment(req, res) {
   res.json({ message: "Comment deleted.", comment: removed });
 }
 
-// POST /api/comments/:id/like  — 👍 a piece of advice. (Done by Andrea Ho)
-async function likeComment(req, res) {
-  const updated = await commentsRepo.vote(Number(req.params.id), "likes");
+// POST /api/comments/:id/like  — 👍 a piece of advice.
+async function upvoteComment(req, res) {
+  const userId = req.body?.userId ?? req.query?.userId;
+  if (userId === undefined || userId === null || userId === "") {
+    return res.status(400).json({ error: "userId is required." });
+  }
+
+  const updated = await commentsRepo.toggleLike(Number(req.params.id), Number(userId));
   if (!updated) return res.status(404).json({ error: "Comment not found." });
   res.json(updated);
 }
 
 // POST /api/comments/:id/dislike  — 👎 a piece of advice.
-async function dislikeComment(req, res) {
-  const updated = await commentsRepo.vote(Number(req.params.id), "dislikes");
+async function downvoteComment(req, res) {
+  const userId = req.body?.userId ?? req.query?.userId;
+  if (userId === undefined || userId === null || userId === "") {
+    return res.status(400).json({ error: "userId is required." });
+  }
+
+  const updated = await commentsRepo.toggleDislike(Number(req.params.id), Number(userId));
   if (!updated) return res.status(404).json({ error: "Comment not found." });
   res.json(updated);
 }
 
-module.exports = { getComments, createComment, updateComment, deleteComment, likeComment, dislikeComment };
+module.exports = { getComments, createComment, updateComment, deleteComment, upvoteComment, downvoteComment };
