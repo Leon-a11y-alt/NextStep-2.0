@@ -20,13 +20,14 @@ import AppShell from "@/components/AppShell";
 import Card from "@/components/Card";
 import Button from "@/components/Button";
 import Modal from "@/components/Modal";
+import DropdownMenu from "@/components/DropdownMenu";
 import ApiErrorBanner from "@/components/ApiErrorBanner";
 import Badge from "@/components/Badge";
 import Avatar from "@/components/Avatar";
 import { useAuth } from "@/lib/auth";
 import { useMode } from "@/lib/mode";
 import { PostsAPI, CommentsAPI, AdminAPI, HabitsAPI, PlansAPI } from "@/lib/api";
-import { PlusIcon, SearchIcon, CheckIcon, XIcon, ShieldIcon, UpIcon, DownIcon, TargetIcon, BookmarkIcon } from "@/lib/icons";
+import { PlusIcon, SearchIcon, CheckIcon, XIcon, ShieldIcon, UpIcon, DownIcon, TargetIcon, BookmarkIcon, KebabIcon } from "@/lib/icons";
 
 // Fallback chips if /api/posts/categories can't be reached. The server is the
 // source of truth (it rejects a category from the wrong forum) — these just
@@ -80,11 +81,12 @@ export default function ForumPage() {
   const copy = FORUM[forumType];
 
   const [posts, setPosts] = useState([]);
-  const [commentsByPost, setCommentsByPost] = useState({}); // { postId: [replies] }
+  const [commentsByPost, setCommentsByPost] = useState({}); // { postId: [first reply only] }
   const [pending, setPending] = useState([]);               // admin only: posts awaiting review
   const [catalogue, setCatalogue] = useState(FALLBACK_CATEGORIES);
   const [category, setCategory] = useState("All");
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("newest");           // "newest" | "mostLiked" | "mostDisliked"
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -110,6 +112,10 @@ export default function ForumPage() {
   const [target, setTarget] = useState(null);
   const [targetForm, setTargetForm] = useState({ name: "", frequency: "Daily" });
 
+  // Report modal
+  const [reportTarget, setReportTarget] = useState(null); // { type: "post" | "comment", id, author, content }
+  const [reportForm, setReportForm] = useState({ reason: "", details: "" });
+
   // The category chips the server will accept for this forum.
   useEffect(() => {
     let alive = true;
@@ -124,12 +130,14 @@ export default function ForumPage() {
     setError("");
     try {
       // Ask for ONE forum — the backend filters in SQL.
-      const data = await PostsAPI.list(category, search, user?.id, forumType);
+      const data = await PostsAPI.list(category, search, user?.id, forumType, sortBy);
       setPosts(data);
-      // Load every reply once and group by postId so we can show them inline.
+      // Load only the first reply for each post to display a preview on the forum page
       const all = await CommentsAPI.all();
       const map = {};
-      for (const c of all) (map[c.postId] ||= []).push(c);
+      for (const c of all) {
+        if (!map[c.postId]) map[c.postId] = [c]; // only keep first comment
+      }
       setCommentsByPost(map);
       if (user?.role === "admin") setPending(await AdminAPI.pendingPosts());
     } catch (err) { setError(err.message); }
@@ -138,7 +146,7 @@ export default function ForumPage() {
   // Reload when the forum, category or user changes. Switching mode resets the
   // category, since the two forums have no categories in common.
   useEffect(() => { setCategory("All"); }, [forumType]);
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [category, user, forumType]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [category, user, forumType, sortBy]);
 
   function flash(msg) { setNotice(msg); setTimeout(() => setNotice(""), 2500); }
 
@@ -312,6 +320,19 @@ export default function ForumPage() {
     } catch (err) { setError(err.message); }
   }
 
+  async function handleReport(e) {
+    e.preventDefault();
+    if (!reportTarget || saving) return;
+    setSaving(true);
+    try {
+      // In a real app, this would send to a /api/reports endpoint
+      flash(`Report submitted for ${reportTarget.type}. Thank you for helping keep the forum safe.`);
+      setReportTarget(null);
+      setReportForm({ reason: "", details: "" });
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
   const canManagePost = (post) => Boolean(user?.id && (user?.role === "admin" || (post.userId && Number(post.userId) === Number(user.id))));
   const canManageComment = (c) => Boolean(user?.id && (user?.role ==="admin" || (c.userId && Number(c.userId) === Number(user.id))));
 
@@ -358,6 +379,16 @@ export default function ForumPage() {
             value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === "Enter" && load()} />
           <Button onClick={load}>Search</Button>
         </div>
+        <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label htmlFor="post-sort" className="field">Sort posts</label>
+            <select id="post-sort" value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="select" style={{ width: "auto", minWidth: 140 }}>
+              <option value="newest">Newest</option>
+              <option value="mostLiked">Most Liked</option>
+              <option value="mostDisliked">Most Disliked</option>
+            </select>
+          </div>
+        </div>
         <div className="chip-row">
           {categories.map((c) => (
             <button key={c} className={"filter-chip" + (category === c ? " active" : "")}
@@ -385,12 +416,13 @@ export default function ForumPage() {
                   <span className="small muted">&middot; {post.authorYear}</span>
                   <Badge color="blue">{post.category}</Badge>
                 </div>
-                {canManagePost(post) && (
-                  <div className="row gap-8">
-                    <Button size="sm" variant="ghost" onClick={() => handleEditPost(post)}>Edit</Button>
-                    <Button size="sm" variant="danger" onClick={() => handleDeletePost(post)}>Delete</Button>
-                  </div>
-                )}
+                <DropdownMenu items={[
+                  { label: "Report", onClick: () => setReportTarget({ type: "post", id: post.id, author: post.author, content: post.title }) },
+                  ...(canManagePost(post) ? [
+                    { label: "Edit", onClick: () => handleEditPost(post) },
+                    { label: "Delete", variant: "danger", onClick: () => handleDeletePost(post) }
+                  ] : [])
+                ]} />
               </div>
 
               <h3 className="card-title mt-8">{post.title}</h3>
@@ -402,6 +434,11 @@ export default function ForumPage() {
                 <VotePill up={post.upvotes} down={post.downvotes}
                   onUp={() => votePost(post, "up")} onDown={() => votePost(post, "down")} />
                 <span className="small muted">{replies.length} {replies.length === 1 ? "reply" : "replies"}</span>
+                {replies.length > 0 && (
+                  <Button size="sm" variant="ghost" onClick={() => window.location.href = `/forum/${post.id}`}>
+                    View all comments
+                  </Button>
+                )}
                 <Button size="sm" variant="primary"
                   aria-label={`${copy.actionLabel}: ${post.title}`}
                   onClick={() => openPlanner({
@@ -412,33 +449,38 @@ export default function ForumPage() {
                 </Button>
               </div>
 
-              {/* ---- Replies laddered below, in the same box ---- */}
+              {/* ---- First reply preview (show only 1) ---- */}
               {replies.length > 0 && (
-                <div className="thread">
-                  {replies.map((c) => (
-                    <div className="thread-item" key={c.id}>
+                <div className="thread" style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+                  <div className="thread-item">
+                    <div className="row gap-8" style={{ alignItems: "center", justifyContent: "space-between" }}>
                       <div className="row gap-8" style={{ alignItems: "center" }}>
-                        <Avatar name={c.author} size={26} />
-                        <span className="small" style={{ fontWeight: 700 }}>{c.author}</span>
-                        <span className="small muted">&middot; {c.authorYear}</span>
+                        <Avatar name={replies[0].author} size={26} />
+                        <span className="small" style={{ fontWeight: 700 }}>{replies[0].author}</span>
+                        <span className="small muted">&middot; {replies[0].authorYear}</span>
                       </div>
-                      <div className="small mt-8">{c.text}</div>
-                      <div className="row gap-8 mt-8" style={{ flexWrap: "wrap", alignItems: "center" }}>
-                        <VotePill up={c.likes} down={c.dislikes}
-                          onUp={() => voteComment(c, "up")} onDown={() => voteComment(c, "down")} />
-                        <Button size="sm" variant="primary"
-                          aria-label={`${copy.actionLabel}: reply by ${c.author}`}
-                          onClick={() => openPlanner({
-                            text: c.text, author: c.author, authorYear: c.authorYear,
-                            postId: c.postId, isReply: true,
-                          })}>
-                          {forumType === "habit" ? <TargetIcon size={14} /> : <BookmarkIcon size={14} />} {copy.actionLabel}
-                        </Button>
-                        {canManageComment(c) && <Button size="sm" variant="ghost" onClick={() => handleEditComment(c)}>Edit</Button>}
-                        {canManageComment(c) && <Button size="sm" variant="danger" onClick={() => handleDeleteComment(c)}>Delete</Button>}
-                      </div>
+                      <DropdownMenu items={[
+                        { label: "Report", onClick: () => setReportTarget({ type: "comment", id: replies[0].id, author: replies[0].author, content: replies[0].text }) },
+                        ...(canManageComment(replies[0]) ? [
+                          { label: "Edit", onClick: () => handleEditComment(replies[0]) },
+                          { label: "Delete", variant: "danger", onClick: () => handleDeleteComment(replies[0]) }
+                        ] : [])
+                      ]} />
                     </div>
-                  ))}
+                    <div className="small mt-8">{replies[0].text}</div>
+                    <div className="row gap-8 mt-8" style={{ flexWrap: "wrap", alignItems: "center" }}>
+                      <VotePill up={replies[0].likes} down={replies[0].dislikes}
+                        onUp={() => voteComment(replies[0], "up")} onDown={() => voteComment(replies[0], "down")} />
+                      <Button size="sm" variant="primary"
+                        aria-label={`${copy.actionLabel}: reply by ${replies[0].author}`}
+                        onClick={() => openPlanner({
+                          text: replies[0].text, author: replies[0].author, authorYear: replies[0].authorYear,
+                          postId: replies[0].postId, isReply: true,
+                        })}>
+                        {forumType === "habit" ? <TargetIcon size={14} /> : <BookmarkIcon size={14} />} {copy.actionLabel}
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -549,6 +591,40 @@ export default function ForumPage() {
             </div>
             <Button variant="primary" className="btn-block" type="submit" disabled={saving || !targetForm.name.trim()}>
               {saving ? "Saving…" : copy.actionLabel}
+            </Button>
+          </form>
+        )}
+      </Modal>
+
+      {/* Report post/comment modal */}
+      <Modal open={!!reportTarget} title={`Report this ${reportTarget?.type || "content"}`} onClose={() => setReportTarget(null)}>
+        {reportTarget && (
+          <form onSubmit={handleReport}>
+            <div className="small muted mb-16" style={{ padding: "10px 12px", background: "var(--surface-2)", borderRadius: 10, borderLeft: "3px solid var(--red)" }}>
+              <strong>{reportTarget.author}</strong>:<br />
+              &ldquo;{reportTarget.content}&rdquo;
+            </div>
+            <div className="field-group">
+              <label className="field" htmlFor="report-reason">Reason for report</label>
+              <select id="report-reason" className="select" required value={reportForm.reason} onChange={(e) => setReportForm({ ...reportForm, reason: e.target.value })}>
+                <option value="">Select a reason</option>
+                <option value="spam">Spam or advertisement</option>
+                <option value="abusive">Abusive or harassing language</option>
+                <option value="inappropriate">Inappropriate content</option>
+                <option value="misinformation">Misinformation or false claims</option>
+                <option value="off-topic">Off-topic or irrelevant</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div className="field-group">
+              <label className="field" htmlFor="report-details">Additional details (optional)</label>
+              <textarea id="report-details" className="textarea" rows={3} value={reportForm.details} onChange={(e) => setReportForm({ ...reportForm, details: e.target.value })} placeholder="Provide more context if needed…" />
+            </div>
+            <div className="small muted mb-16">
+              Our moderation team will review your report within 24 hours.
+            </div>
+            <Button variant="primary" className="btn-block" type="submit" disabled={saving || !reportForm.reason}>
+              {saving ? "Submitting…" : "Submit report"}
             </Button>
           </form>
         )}

@@ -64,6 +64,9 @@ export const LogoutIcon = (p) => (
 export const ArrowRightIcon = (p) => (
   <svg {...base(p.size)}><path d="M5 12h14M13 6l6 6-6 6" /></svg>
 );
+export const ArrowLeftIcon = (p) => (
+  <svg {...base(p.size)}><path d="M19 12H5M11 18l-6-6 6-6" /></svg>
+);
 export const ChatIcon = (p) => (
   <svg {...base(p.size)}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" /></svg>
 );
@@ -123,4 +126,7 @@ export const HeartIcon = (p) => (
 );
 export const GamepadIcon = (p) => (
   <svg {...base(p.size)}><path d="M7 8h10a5 5 0 0 1 5 5 3 3 0 0 1-5.3 1.9L15 13H9l-1.7 1.9A3 3 0 0 1 2 13a5 5 0 0 1 5-5Z" /><path d="M7 11v2M6 12h2M15 11h.01M17.5 12.5h.01" /></svg>
+);
+export const KebabIcon = (p) => (
+  <svg {...base(p.size)}><circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" /></svg>
 );

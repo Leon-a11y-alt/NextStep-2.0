@@ -47,14 +47,21 @@ export const EmailOtpAPI = {
 export const PostsAPI = {
   // forumType ("study" | "habit") keeps the two forums apart — the backend
   // filters on it in SQL, so the other forum's posts are never sent.
-  list: (category, search, userId, forumType) => {
+  list: (category, search, userId, forumType, sortBy) => {
     const params = new URLSearchParams();
     if (forumType) params.set("forumType", forumType);
     if (category && category !== "All") params.set("category", category);
     if (search) params.set("search", search);
     if (userId) params.set("userId", String(userId));
+    if (sortBy) params.set("sortBy", sortBy);
     const q = params.toString();
     return api.get(`/api/posts${q ? "?" + q : ""}`);
+  },
+  getById: (id, userId) => {
+    const params = new URLSearchParams();
+    if (userId) params.set("userId", String(userId));
+    const q = params.toString();
+    return api.get(`/api/posts/${id}${q ? "?" + q : ""}`);
   },
   // { study: [...], habit: [...] } — the category chips for each forum.
   categories: () => api.get("/api/posts/categories"),
@@ -66,8 +73,17 @@ export const PostsAPI = {
 };
 
 export const CommentsAPI = {
-  list: (postId) => api.get(`/api/comments?postId=${postId}`),
-  all: () => api.get("/api/comments"),          // every comment (grouped by post on the forum) — Andrea Ho
+  list: (postId, sortBy) => {
+    const params = new URLSearchParams();
+    if (postId) params.set("postId", postId);
+    if (sortBy) params.set("sortBy", sortBy);
+    const q = params.toString();
+    return api.get(`/api/comments${q ? "?" + q : ""}`);
+  },
+  all: (sortBy) => {
+    if (sortBy) return api.get(`/api/comments?sortBy=${sortBy}`);
+    return api.get("/api/comments");          // every comment (grouped by post on the forum) — Andrea Ho
+  },
   create: (payload) => api.post("/api/comments", payload),
   update: (id, payload) => api.put(`/api/comments/${id}`, payload),
   remove: (id, userId) => api.del(`/api/comments/${id}`, { userId }),
