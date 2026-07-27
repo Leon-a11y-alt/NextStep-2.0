@@ -343,7 +343,7 @@ export default function TimerPage() {
               onClick={testTimer}
               disabled={running}
             >
-              Test (5s)
+              Test for demo (5s)
             </Button>
           </div>
 
