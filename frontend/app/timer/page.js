@@ -101,6 +101,28 @@ export default function TimerPage() {
     // eslint-disable-next-line
   }, [running]);
 
+  useEffect(() => {
+    const prefix =
+      mode === "shortBreak"
+        ? "☕"
+        : mode === "longBreak"
+          ? "🌴"
+          : "🍅";
+
+    const label =
+      mode === "shortBreak"
+        ? "Break"
+        : mode === "longBreak"
+          ? "Break"
+          : "Focus";
+
+    document.title = `${prefix} ${fmt(secondsLeft)} ${label} - NextStep`;
+
+    return () => {
+      document.title = "NextStep | Focus Timer";
+    };
+  }, [running, secondsLeft, mode]);
+
   function flash(msg) { setNotice(msg); setTimeout(() => setNotice(""), 3000); }
 
   function prepareAudio() {
