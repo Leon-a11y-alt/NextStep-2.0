@@ -1,22 +1,45 @@
-// Forum posts data-access layer (MySQL).
+// Forum posts data-access layer (PostgreSQL on Supabase).
+// camelCase columns are double-quoted — Postgres lowercases unquoted names.
 const { pool } = require("../config/db");
 
 const inMemoryVotes = new Map();
+const inMemoryDownvotes = new Map();
 
 function getVoteSet(postId) {
-  if (!inMemoryVotes.has(postId)) inMemoryVotes.set(postId, new Set());
+  if (!inMemoryVotes.has(postId)) {
+    inMemoryVotes.set(postId, new Set());
+  }
   return inMemoryVotes.get(postId);
+}
+
+function getDownvoteSet(postId) {
+  if (!inMemoryDownvotes.has(postId)) {
+    inMemoryDownvotes.set(postId, new Set());
+  }
+  return inMemoryDownvotes.get(postId);
 }
 
 function isPostUpvotedByUser(postId, userId) {
   return Boolean(userId && getVoteSet(postId).has(Number(userId)));
 }
 
-// Approved posts with optional category + search filtering, newest first.
-async function findApproved({ category, search, userId }) {
+function isPostDownvotedByUser(postId, userId) {
+  return Boolean(userId && getDownvoteSet(postId).has(Number(userId)));
+}
+
+// Approved posts with optional forum / category / search filtering, newest first.
+//
+// `forumType` keeps the Study and Habit forums completely separate: the split
+// happens here in SQL, so a habit question can never reach the Study tab even
+// if the frontend asked for it. (Khaing Khant Zaw)
+async function findApproved({ category, search, userId, forumType }) {
   let sql = "SELECT p.*, 0 AS upvotedByUser FROM posts p WHERE p.status = 'approved'";
   const params = [];
 
+  if (forumType === "study" || forumType === "habit") {
+    sql += ' AND p."forumType" = ?';
+    params.push(forumType);
+  }
   if (category && category !== "All") {
     sql += " AND p.category = ?";
     params.push(category);
@@ -54,9 +77,9 @@ async function findByStatus(status) {
 }
 
 async function create(data) {
-  const [result] = await pool.query(
-    `INSERT INTO posts (userId, author, authorYear, title, category, content, suggestedAction, status, upvotes, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+  const [rows] = await pool.query(
+    `INSERT INTO posts ("userId", author, "authorYear", title, category, content, "suggestedAction", status, "forumType", upvotes, "createdAt")
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?) RETURNING id`,
     [
       data.userId,
       data.author,
@@ -66,20 +89,21 @@ async function create(data) {
       data.content,
       data.suggestedAction,
       data.status,
+      data.forumType,
       data.createdAt,
     ]
   );
-  return findById(result.insertId);
+  return findById(rows[0].id);
 }
 
 // Update only the fields provided (undefined fields are ignored).
 async function update(id, fields) {
-  const allowed = ["title", "category", "content", "suggestedAction", "status", "upvotes"];
+  const allowed = ["title", "category", "content", "suggestedAction", "status", "forumType", "upvotes"];
   const sets = [];
   const params = [];
   for (const key of allowed) {
     if (fields[key] !== undefined) {
-      sets.push(`${key} = ?`);
+      sets.push(`"${key}" = ?`);
       params.push(fields[key]);
     }
   }
@@ -102,16 +126,28 @@ async function toggleUpvote(id, userId) {
   if (!post) return null;
 
   try {
-    const [existing] = await pool.query(
+    const [upvote] = await pool.query(
       "SELECT * FROM post_upvotes WHERE postId = ? AND userId = ? LIMIT 1",
       [id, userId]
     );
 
-    if (existing.length) {
+    // check upvote
+    if (upvote.length) {
       await pool.query("DELETE FROM post_upvotes WHERE postId = ? AND userId = ?", [id, userId]);
       await pool.query("UPDATE posts SET upvotes = GREATEST(upvotes - 1, 0) WHERE id = ?", [id]);
       getVoteSet(id).delete(Number(userId));
     } else {
+      // check if downvote
+      const [downvote] = await pool.query(
+        "SELECT * FROM post_downvotes WHERE postId = ? AND userId = ? LIMIT 1",
+        [id, userId]
+      );
+      if(downvote.length){
+        await pool.query("DELETE FROM post_downvotes WHERE postId = ? AND userId = ?", [id, userId]);
+        await pool.query("UPDATE posts SET downvotes = GREATEST(downvotes - 1, 0) WHERE id = ?", [id]);
+        getDownvoteSet(id).delete(Number(userId));
+      }
+      // add upvote
       await pool.query("INSERT INTO post_upvotes (postId, userId) VALUES (?, ?)", [id, userId]);
       await pool.query("UPDATE posts SET upvotes = upvotes + 1 WHERE id = ?", [id]);
       getVoteSet(id).add(Number(userId));
@@ -129,14 +165,58 @@ async function toggleUpvote(id, userId) {
   return findById(id, userId);
 }
 
+// A simple downvote counter for the post (mirrors the reply dislike). — Andrea Ho
+async function toggleDownvote(id, userId) {
+  const post = await findById(id, userId);
+  if (!post) return null;
+
+  try {
+    const [downvote] = await pool.query(
+      "SELECT * FROM post_downvotes WHERE postId = ? AND userId = ? LIMIT 1",
+      [id, userId]
+    );
+
+    if (downvote.length) {
+      // Remove downvote
+      await pool.query("DELETE FROM post_downvotes WHERE postId = ? AND userId = ?", [id, userId]);
+      await pool.query("UPDATE posts SET downvotes = GREATEST(downvotes - 1, 0) WHERE id = ?", [id]);
+      getDownvoteSet(id).delete(Number(userId));
+    } else {
+      // check upvote
+      const [upvote] = await pool.query(
+        "SELECT * FROM post_upvotes WHERE postId = ? AND userId = ? LIMIT 1",
+        [id, userId]
+      );
+      if(upvote.length){
+        await pool.query("DELETE FROM post_upvotes WHERE postId = ? AND userId = ?", [id, userId]);
+        await pool.query("UPDATE posts SET upvotes = GREATEST(upvotes - 1, 0) WHERE id = ?", [id]);
+        getVoteSet(id).delete(Number(userId));
+      }
+      // Add downvote
+      await pool.query("INSERT INTO post_downvotes (postId, userId) VALUES (?, ?)", [id, userId]);
+      await pool.query("UPDATE posts SET downvotes = downvotes + 1 WHERE id = ?", [id]);
+      getDownvoteSet(id).add(Number(userId));
+    }
+  } catch (err) {
+    const currentVotes = Number(post.downvotes || 0);
+    const [downvote] = await pool.query("SELECT * FROM post_downvotes WHERE postId = ? AND userId = ? LIMIT 1", [id, userId]);
+    const hasVote = downvote.length > 0;
+    const nextVotes = hasVote ? Math.max(currentVotes - 1, 0) : currentVotes + 1;
+
+    await pool.query("UPDATE posts SET downvotes = ? WHERE id = ?", [nextVotes, id]);
+  }
+
+  return findById(id, userId);
+}
+
 async function count() {
-  const [rows] = await pool.query("SELECT COUNT(*) AS n FROM posts");
+  const [rows] = await pool.query("SELECT COUNT(*)::int AS n FROM posts");
   return rows[0].n;
 }
 
 async function countByStatus(status) {
   const [rows] = await pool.query(
-    "SELECT COUNT(*) AS n FROM posts WHERE status = ?",
+    "SELECT COUNT(*)::int AS n FROM posts WHERE status = ?",
     [status]
   );
   return rows[0].n;
@@ -150,6 +230,7 @@ module.exports = {
   update,
   remove,
   toggleUpvote,
+  toggleDownvote,
   count,
   countByStatus,
 };

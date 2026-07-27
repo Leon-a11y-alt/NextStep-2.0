@@ -3,6 +3,7 @@ import React from "react";
 import Card from "./Card";
 import Badge from "./Badge";
 import Button from "./Button";
+import Avatar from "./Avatar";
 import { UpIcon, ChatIcon, PlusIcon } from "@/lib/icons";
 
 // Reddit-style advice post card with upvote column, category, author year,
@@ -18,9 +19,12 @@ export default function PostCard({ post, onUpvote, onAddToTracker, onComment, ca
       </div>
 
       <div className="grow">
-        <div className="row gap-8 mb-8" style={{ flexWrap: "wrap" }}>
+        {/* Author profile: avatar (initials) + name, Reddit-style — Andrea Ho */}
+        <div className="row gap-8 mb-8" style={{ flexWrap: "wrap", alignItems: "center" }}>
+          <Avatar name={post.author} size={28} />
+          <span className="small" style={{ fontWeight: 700 }}>{post.author}</span>
+          <span className="small muted">&middot; {post.authorYear}</span>
           <Badge color="blue">{post.category}</Badge>
-          <span className="small muted">Posted by {post.author} &middot; {post.authorYear}</span>
         </div>
 
         <h3 className="card-title mb-8">{post.title}</h3>

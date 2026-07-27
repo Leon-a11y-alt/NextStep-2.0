@@ -1,59 +1,40 @@
+// Focus Timer sessions. Each finished session is stored, and if it was tied
+// to a habit, that habit's progress is bumped (the "advice becomes action"
+// loop feeds real progress).
 const focusRepo = require("../repositories/focus.repo");
 const habitsRepo = require("../repositories/habits.repo");
 
+// GET /api/focus-sessions?userId=1
 async function getSessions(req, res) {
-  const { userId } = req.query;
-
-  const sessions = await focusRepo.find(userId);
-
+  const sessions = await focusRepo.findByUser(req.query.userId);
   res.json(sessions);
 }
 
+// POST /api/focus-sessions  { userId, habitId|null, habitName, minutes, date }
 async function createSession(req, res) {
-  const {
-    userId,
-    habitId,
-    habitName,
-    minutes,
-    date,
-  } = req.body;
+  const { userId, habitId, habitName, minutes, date } = req.body;
+  if (!userId || !minutes) {
+    return res.status(400).json({ error: "userId and minutes are required." });
+  }
 
-if (!userId) {
-    return res.status(400).json({
-        error: "User ID is required."
-    });
+  const session = await focusRepo.create({
+    userId: Number(userId),
+    habitId: habitId ? Number(habitId) : null,
+    habitName: habitName || "Free focus",
+    minutes: Number(minutes),
+    date: date || new Date().toISOString().slice(0, 10),
+  });
+
+  // A completed session on a habit adds 10% progress (capped at 100%).
+  if (habitId) {
+    const habit = await habitsRepo.findById(Number(habitId));
+    if (habit) {
+      const next = Math.min((habit.progress || 0) + 10, 100);
+      await habitsRepo.update(Number(habitId), { progress: next });
+    }
+  }
+
+  res.status(201).json(session);
 }
 
-if (!minutes || minutes <= 0) {
-    return res.status(400).json({
-        error: "Minutes must be greater than 0."
-    });
-}
-
-if (!date) {
-    return res.status(400).json({
-        error: "Date is required."
-    });
-}
-
-const session = await focusRepo.create({
-  userId,
-  habitId,
-  habitName: habitName || "Free focus",
-  minutes,
-  date,
-});
-
-// If this focus session is linked to a habit,
-// increase the habit's progress by 10%.
-if (habitId) {
-  await habitsRepo.incrementProgress(habitId);
-}
-
-res.status(201).json(session);
-}
-
-module.exports = {
-  getSessions,
-  createSession,
-};
+module.exports = { getSessions, createSession };

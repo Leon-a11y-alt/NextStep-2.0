@@ -1,4 +1,5 @@
-// Users data-access layer (MySQL).
+// Users data-access layer (PostgreSQL on Supabase).
+// camelCase columns are double-quoted — Postgres lowercases unquoted names.
 const { pool } = require("../config/db");
 
 async function findByEmail(email) {
@@ -20,12 +21,12 @@ async function listAll() {
 }
 
 async function create({ name, email, password, yearLevel, diploma, role, createdAt }) {
-  const [result] = await pool.query(
-    `INSERT INTO users (name, email, password, yearLevel, diploma, role, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  const [rows] = await pool.query(
+    `INSERT INTO users (name, email, password, "yearLevel", diploma, role, "createdAt")
+     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     [name, email, password, yearLevel, diploma, role, createdAt]
   );
-  return findById(result.insertId);
+  return findById(rows[0].id);
 }
 
 async function updateRole(id, role) {
@@ -33,9 +34,22 @@ async function updateRole(id, role) {
   return findById(id);
 }
 
+// Ban / unban a user (isBanned column added by schema.sql).
+async function setBanned(id, isBanned) {
+  await pool.query('UPDATE users SET "isBanned" = ? WHERE id = ?', [isBanned, id]);
+  return findById(id);
+}
+
+async function remove(id) {
+  const user = await findById(id);
+  if (!user) return null;
+  await pool.query("DELETE FROM users WHERE id = ?", [id]);
+  return user;
+}
+
 async function count() {
-  const [rows] = await pool.query("SELECT COUNT(*) AS n FROM users");
+  const [rows] = await pool.query("SELECT COUNT(*)::int AS n FROM users");
   return rows[0].n;
 }
 
-module.exports = { findByEmail, findById, listAll, create, updateRole, count };
+module.exports = { findByEmail, findById, listAll, create, updateRole, setBanned, remove, count };

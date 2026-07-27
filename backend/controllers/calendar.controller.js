@@ -8,9 +8,10 @@ async function getTasks(req, res) {
   res.json(result);
 }
 
-// POST /api/calendar
+// POST /api/calendar  { userId, title, date, time, habitId?, planId? }
+// habitId / planId link the task back to the habit or study plan it came from.
 async function createTask(req, res) {
-  const { userId, habitId, title, date, time } = req.body;
+  const { userId, habitId, planId, title, date, time } = req.body;
   if (!title || !date) {
     return res.status(400).json({ error: "Task title and date are required." });
   }
@@ -18,6 +19,7 @@ async function createTask(req, res) {
   const newTask = await calendarRepo.create({
     userId: userId || 1,
     habitId: habitId || null,
+    planId: planId || null,
     title,
     date,
     time: time || "09:00",

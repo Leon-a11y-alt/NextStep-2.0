@@ -1,27 +1,32 @@
-// One-off setup script: creates the database, tables, and seed data by
+// One-off setup script: creates the tables and seed data on Supabase by
 // running schema.sql. Safe to re-run (it recreates the tables each time).
 //
 // Usage:  npm run db:init   (from the backend folder)
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
-const mysql = require("mysql2/promise");
+const { Client } = require("pg");
 
 async function main() {
+  if (!process.env.DATABASE_URL) {
+    throw new Error(
+      "DATABASE_URL is missing. Copy it from the Supabase dashboard " +
+      "(Project Settings → Database → Connection string) into backend/.env"
+    );
+  }
+
   const sql = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
 
-  // Connect WITHOUT selecting a database — schema.sql creates it itself.
-  const conn = await mysql.createConnection({
-    host: process.env.DB_HOST || "localhost",
-    port: Number(process.env.DB_PORT) || 3306,
-    user: process.env.DB_USER || "root",
-    password: process.env.DB_PASSWORD || "",
-    multipleStatements: true, // schema.sql contains many statements
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }, // Supabase requires SSL
   });
 
+  console.log("Connecting to Supabase ...");
+  await client.connect();
   console.log("Running schema.sql ...");
-  await conn.query(sql);
-  await conn.end();
+  await client.query(sql); // pg runs the whole multi-statement file in one go
+  await client.end();
   console.log("Database ready: tables created and seed data inserted.");
 }
 

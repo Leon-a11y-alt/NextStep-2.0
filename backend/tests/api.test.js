@@ -31,6 +31,8 @@ const postsCtrl = require("../controllers/posts.controller");
 const commentsCtrl = require("../controllers/comments.controller");
 const habitsCtrl = require("../controllers/habits.controller");
 const adminCtrl = require("../controllers/admin.controller");
+const gamificationCtrl = require("../controllers/gamification.controller");
+const gamificationCfg = require("../config/gamification");
 
 // --- Auth: login rejects a wrong password ---
 test("login fails with wrong password", async () => {
@@ -97,6 +99,24 @@ test("a user can upvote once and then remove that upvote", async () => {
   await postsCtrl.upvotePost({ params: { id: String(createRes.body.id) }, body: { userId: 9 } }, second);
   assert.strictEqual(second.statusCode, 200);
   assert.strictEqual(second.body.upvotes, 0);
+});
+
+test("a user can like a comment once and then remove that like", async () => {
+  const createRes = mockRes();
+  await commentsCtrl.createComment(
+    { body: { postId: 1, userId: 2, author: "Tester", text: "vote me" } },
+    createRes
+  );
+
+  const first = mockRes();
+  await commentsCtrl.upvoteComment({ params: { id: String(createRes.body.id) }, body: { userId: 9 } }, first);
+  assert.strictEqual(first.statusCode, 200);
+  assert.strictEqual(first.body.likes, 1);
+
+  const second = mockRes();
+  await commentsCtrl.upvoteComment({ params: { id: String(createRes.body.id) }, body: { userId: 9 } }, second);
+  assert.strictEqual(second.statusCode, 200);
+  assert.strictEqual(second.body.likes, 0);
 });
 
 test("owner can delete their own post", async () => {
@@ -182,11 +202,44 @@ test("advice can be turned into a habit (add to tracker)", async () => {
   assert.strictEqual(res.body.sourcePostId, 1);
 });
 
-// --- Admin: approving a pending post changes its status ---
-test("admin can approve a pending post", async () => {
+// --- Admin: approving a post sets its status to "approved" ---
+// Create a fresh post first so this doesn't depend on a specific seed id.
+test("admin can approve a post", async () => {
+  const created = mockRes();
+  await postsCtrl.createPost({ body: { title: "Approve me", content: "please", author: "Tester" } }, created);
   const res = mockRes();
-  await adminCtrl.approvePost({ params: { id: "5" } }, res);
+  await adminCtrl.approvePost({ params: { id: String(created.body.id) } }, res);
   assert.strictEqual(res.body.status, "approved");
+});
+
+// --- Gamification: level curve maps total XP to the right level (pure) ---
+test("level curve maps XP to the expected level", () => {
+  assert.strictEqual(gamificationCfg.resolveLevel(0).level, 1);
+  assert.strictEqual(gamificationCfg.resolveLevel(250).level, 2);
+  const lv = gamificationCfg.resolveLevel(1293);
+  assert.strictEqual(lv.level, 4);
+  assert.strictEqual(lv.title, "Consistent Learner");
+});
+
+// --- Gamification: the summary endpoint needs a userId ---
+test("gamification summary requires a userId", async () => {
+  const res = mockRes();
+  await gamificationCtrl.getSummary({ query: {} }, res);
+  assert.strictEqual(res.statusCode, 400);
+});
+
+// --- Gamification: a student's summary is derived from real seed data ---
+test("gamification summary is derived from the student's activity", async () => {
+  const res = mockRes();
+  await gamificationCtrl.getSummary({ query: { userId: "1" } }, res);
+  assert.strictEqual(res.statusCode, 200);
+  assert.ok(res.body.xp.total > 0, "expected some XP");
+  assert.strictEqual(typeof res.body.level.level, "number");
+  assert.strictEqual(res.body.badges.length, gamificationCfg.BADGES.length);
+  assert.ok(res.body.badges.find((b) => b.id === "first-step").earned, "First Step should be earned");
+  // `best` (longest run ever) is independent of today's date, so this stays
+  // green in CI regardless of when it runs; the 18-day seed run gives >= 7.
+  assert.ok(res.body.streak.best >= 7, "seed data gives a multi-day streak");
 });
 
 async function run() {
