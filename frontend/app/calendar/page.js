@@ -15,7 +15,7 @@ import Button from "@/components/Button";
 import Modal from "@/components/Modal";
 import ApiErrorBanner from "@/components/ApiErrorBanner";
 import { useAuth } from "@/lib/auth";
-import { CalendarAPI } from "@/lib/api";
+import { CalendarAPI, HabitsAPI, PlansAPI } from "@/lib/api";
 import { PlusIcon, CalendarIcon, ArrowRightIcon } from "@/lib/icons";
 
 // ---- Small date helpers (no external libraries, keeps the app offline-safe) ----
@@ -52,11 +52,18 @@ export default function CalendarPage() {
   const [tasks, setTasks] = useState([]);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ title: "", date: toKey(new Date()), time: "09:00" });
+  const [form, setForm] = useState({
+    title: "",
+    date: toKey(new Date()),
+    time: "09:00",
+    taskType: "calendar",
+    frequency: "Daily",
+  });
 
   // View state: "week" shows 7 days; "month" shows a whole month grid.
   const [view, setView] = useState("week");
-  const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));   // anchor for week view
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [weekStart, setWeekStart] = useState(() => mondayOf(new Date())); // anchor for week view
   const [monthCursor, setMonthCursor] = useState(() => firstOfMonth(new Date())); // anchor for month view
 
   // ---- Load all this user's tasks from Supabase ----
@@ -66,11 +73,6 @@ export default function CalendarPage() {
     try {
       const data = await CalendarAPI.list(user.id);
       setTasks(data);
-      // On first load, jump the week to where the tasks actually are (demo-friendly).
-      if (data.length > 0) {
-        const earliest = data.map((t) => t.date).sort()[0];
-        setWeekStart(mondayOf(new Date(earliest + "T00:00:00")));
-      }
     } catch (err) { setError(err.message); }
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -79,51 +81,116 @@ export default function CalendarPage() {
   // The dropdown under the title. Choosing a view also resets its anchor to
   // "today" so the user always lands somewhere sensible.
   function chooseView(value) {
-    if (value === "week") { setView("week"); setWeekStart(mondayOf(new Date())); }
-    else if (value === "month") { setView("month"); setMonthCursor(firstOfMonth(new Date())); }
-    else if (value === "prevMonth") { setView("month"); setMonthCursor(addMonths(new Date(), -1)); }
+    setView(value);
+
+    if (value === "date") setSelectedDate(new Date());
+    if (value === "week") setWeekStart(mondayOf(new Date()));
+    if (value === "month" || value === "year") setMonthCursor(firstOfMonth(new Date()));
   }
 
-  // Build the day cells for whichever view is active.
   const cells = useMemo(() => {
     const todayKey = toKey(new Date());
+
     const dayCell = (date, inMonth = true) => ({
       key: toKey(date),
       name: DAY_NAMES[(date.getDay() + 6) % 7],
       num: date.getDate(),
+      month: MONTHS[date.getMonth()],
       inMonth,
       isToday: toKey(date) === todayKey,
-      tasks: tasks.filter((t) => t.date === toKey(date)),
+      tasks: tasks.filter((task) => task.date === toKey(date)),
     });
+
+    if (view === "date") return [dayCell(selectedDate)];
 
     if (view === "week") {
-      return Array.from({ length: 7 }, (_, i) => dayCell(addDays(weekStart, i)));
+      return Array.from({ length: 7 }, (_, index) => {
+        const date = addDays(weekStart, index);
+        return dayCell(date);
+      });
     }
-    // Month view: 6 rows x 7 days, starting from the Monday on/before the 1st.
-    const start = mondayOf(firstOfMonth(monthCursor));
-    return Array.from({ length: 42 }, (_, i) => {
-      const date = addDays(start, i);
-      return dayCell(date, date.getMonth() === monthCursor.getMonth());
-    });
-  }, [view, weekStart, monthCursor, tasks]);
 
-  const headerLabel = view === "week"
-    ? weekLabel(weekStart)
-    : `${MONTHS[monthCursor.getMonth()]} ${monthCursor.getFullYear()}`;
+    if (view === "month") {
+      const start = mondayOf(firstOfMonth(monthCursor));
 
-  // Prev/next steps by a week or a month depending on the view.
-  function step(dir) {
-    if (view === "week") setWeekStart((w) => addDays(w, dir * 7));
-    else setMonthCursor((m) => addMonths(m, dir));
+      return Array.from({ length: 42 }, (_, index) => {
+        const date = addDays(start, index);
+        return dayCell(date, date.getMonth() === monthCursor.getMonth());
+      });
+    }
+
+    return [];
+  }, [view, selectedDate, weekStart, monthCursor, tasks]);
+
+  const headerLabel =
+    view === "date"
+      ? selectedDate.toLocaleDateString("en-GB", {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        })
+      : view === "week"
+        ? weekLabel(weekStart)
+        : view === "month"
+          ? `${MONTHS[monthCursor.getMonth()]} ${monthCursor.getFullYear()}`
+          : `${monthCursor.getFullYear()}`;
+
+  function step(direction) {
+    if (view === "date") setSelectedDate((date) => addDays(date, direction));
+    else if (view === "week") setWeekStart((date) => addDays(date, direction * 7));
+    else if (view === "month") setMonthCursor((date) => addMonths(date, direction));
+    else setMonthCursor((date) => new Date(date.getFullYear() + direction, date.getMonth(), 1));
   }
 
   // ---- Create / toggle / delete (all persist to Supabase) ----
   async function createTask(e) {
     e.preventDefault();
+
     try {
-      await CalendarAPI.create({ userId: user.id, title: form.title, date: form.date, time: form.time });
+      let habitId = null;
+      let planId = null;
+
+      // Create the task inside Habit Tracker first.
+      if (form.taskType === "habit") {
+        const habit = await HabitsAPI.create({
+          userId: user.id,
+          name: form.title,
+          frequency: form.frequency,
+        });
+
+        habitId = habit.id;
+      }
+
+      // Create the task inside Study Plans first.
+      if (form.taskType === "plan") {
+        const plan = await PlansAPI.create({
+          userId: user.id,
+          name: form.title,
+        });
+
+        planId = plan.id;
+      }
+
+      // Create the calendar task and store its linked habitId or planId.
+      await CalendarAPI.create({
+        userId: user.id,
+        habitId,
+        planId,
+        title: form.title,
+        date: form.date,
+        time: form.time,
+      });
+
       setShowCreate(false);
-      setForm({ title: "", date: toKey(new Date()), time: "09:00" });
+      setForm({
+        title: "",
+        date: toKey(new Date()),
+        time: "09:00",
+        taskType: "calendar",
+        frequency: "Daily",
+      });
+
       load();
     } catch (err) { setError(err.message); }
   }
@@ -148,13 +215,25 @@ export default function CalendarPage() {
         <select
           className="select"
           style={{ width: 180 }}
-          value={view === "week" ? "week" : (monthCursor.getMonth() === new Date().getMonth() && monthCursor.getFullYear() === new Date().getFullYear() ? "month" : "prevMonth")}
+          value={view}
           onChange={(e) => chooseView(e.target.value)}
         >
-          <option value="week">This week</option>
-          <option value="month">This month</option>
-          <option value="prevMonth">Previous month</option>
+          <option value="date">Day</option>
+          <option value="week">Week</option>
+          <option value="month">Month</option>
+          <option value="year">Year</option>
         </select>
+        {view === "date" && (
+          <input
+            className="input"
+            type="date"
+            value={toKey(selectedDate)}
+            onChange={(e) => {
+              setSelectedDate(new Date(`${e.target.value}T00:00:00`));
+            }}
+            style={{ width: 170 }}
+          />
+        )}
       </div>
 
       {/* Header + navigation */}
@@ -165,7 +244,7 @@ export default function CalendarPage() {
         </div>
         <div className="row gap-8">
           <Button size="sm" onClick={() => step(-1)}>← Prev</Button>
-          <Button size="sm" onClick={() => chooseView(view === "week" ? "week" : "month")}>Today</Button>
+          <Button size="sm" onClick={() => {setSelectedDate(new Date());setWeekStart(mondayOf(new Date()));setMonthCursor(firstOfMonth(new Date()));}} > {view === "year" ? "This year" : "Today"}</Button>
           <Button size="sm" onClick={() => step(1)}>Next →</Button>
         </div>
       </div>
@@ -177,40 +256,141 @@ export default function CalendarPage() {
         <span className="row gap-8 small muted"><span className="cal-swatch done" /> Done</span>
       </div>
 
-      {/* The calendar grid (7 columns; 1 row for a week, up to 6 for a month) */}
-      <div className={"cal-grid" + (view === "month" ? " month" : "")}>
-        {cells.map((d) => (
-          <div key={d.key} className={"cal-day" + (d.isToday ? " today" : "") + (d.inMonth ? "" : " outside")}>
-            <div className="cal-daynum">
-              <span>{view === "week" ? d.name : d.num}</span>
-              <span>{view === "week" ? d.num : ""}</span>
-            </div>
-            {d.tasks.length === 0 && <span className="small muted">—</span>}
-            {d.tasks.map((t) => (
-              // Colour by source (WK): study-plan tasks are purple, habit tasks
-              // are orange, plain tasks are neutral. Fixed colours (not the mode
-              // theme) so study is always purple and habit always orange, in
-              // both the study and habit calendars.
-              <span
-                key={t.id}
-                className={"cal-chip" + (t.planId ? " plan" : t.habitId ? " habit" : "") + (t.completed ? " done" : "")}
-                title={t.completed ? "Click to mark not done" : "Click to mark done"}
-                onClick={() => toggle(t)}
+      {view === "year" && (
+        <div className="grid grid-3">
+          {MONTHS.map((monthName, monthIndex) => {
+            const year = monthCursor.getFullYear();
+
+            const monthTasks = tasks.filter((task) => {
+              const taskDate = new Date(`${task.date}T00:00:00`);
+
+              return (
+                taskDate.getFullYear() === year &&
+                taskDate.getMonth() === monthIndex
+              );
+            });
+
+            const completedCount = monthTasks.filter(
+              (task) => task.completed
+            ).length;
+
+            return (
+              <Card
+                key={monthName}
+                style={{ cursor: "pointer" }}
+                onClick={() => {
+                  setMonthCursor(new Date(year, monthIndex, 1));
+                  setView("month");
+                }}
               >
-                {t.time} · {t.title}
-              </span>
-            ))}
-          </div>
-        ))}
-      </div>
+                <h3 className="card-title">{monthName}</h3>
+
+                <p className="small muted">
+                  {monthTasks.length} task
+                  {monthTasks.length === 1 ? "" : "s"}
+                </p>
+
+                <p className="small muted">
+                  {completedCount} completed
+                </p>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+
+      {view !== "year" && (
+        <div
+          className={
+            "cal-grid" +
+            (view === "month" ? " month" : view === "week" ? " week" : " date-view")
+          }
+        >
+          {cells.map((d) => (
+            <div
+              key={d.key}
+              className={
+                "cal-day" +
+                (d.isToday ? " today" : "") +
+                (d.inMonth ? "" : " outside")
+              }
+            >
+              <div className="cal-daynum">
+                {view === "date" ? (
+                  <span>{d.name}, {d.num} {d.month}</span>
+                ) : view === "week" ? (
+                  <>
+                    <span>{d.name}</span>
+                    <span>{d.num}</span>
+                  </>
+                ) : (
+                  <span>{d.num}</span>
+                )}
+              </div>
+
+              {d.tasks.length === 0 && (
+                <span className="small muted">No tasks</span>
+              )}
+
+              {d.tasks.map((task) => (
+                <span
+                  key={task.id}
+                  className={
+                    "cal-chip" +
+                    (task.planId
+                      ? " plan"
+                      : task.habitId
+                        ? " habit"
+                        : "") +
+                    (task.completed ? " done" : "")
+                  }
+                  onClick={() => toggle(task)}
+                >
+                  {task.time} · {task.title}
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Add-task modal */}
       <Modal open={showCreate} title="Add a calendar task" onClose={() => setShowCreate(false)}>
         <form onSubmit={createTask}>
           <div className="field-group">
+            <label className="field">Add task to</label>
+            <select
+              className="select"
+              value={form.taskType}
+              onChange={(e) => setForm({ ...form, taskType: e.target.value })}
+            >
+              <option value="calendar">Calendar only</option>
+              <option value="habit">Calendar and Habit Tracker</option>
+              <option value="plan">Calendar and Study Plans</option>
+            </select>
+          </div>
+
+          <div className="field-group">
             <label className="field">Task title</label>
             <input className="input" required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Revise data structures" />
           </div>
+          {form.taskType === "habit" && (
+            <div className="field-group">
+              <label className="field">Frequency</label>
+              <select
+                className="select"
+                value={form.frequency}
+                onChange={(e) => setForm({ ...form, frequency: e.target.value })}
+              >
+                <option value="Daily">Daily</option>
+                <option value="Weekdays">Weekdays</option>
+                <option value="Weekly">Weekly</option>
+                <option value="3x per week">3x per week</option>
+                <option value="Monthly">Monthly</option>
+              </select>
+            </div>
+          )}
           <div className="grid grid-2" style={{ gap: 12 }}>
             <div className="field-group">
               <label className="field">Date</label>

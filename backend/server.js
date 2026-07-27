@@ -24,7 +24,6 @@ const postsRoutes = require("./routes/posts.routes");
 const commentsRoutes = require("./routes/comments.routes");
 const habitsRoutes = require("./routes/habits.routes");
 const calendarRoutes = require("./routes/calendar.routes");
-const focusRoutes = require("./routes/focus.routes");
 const adminRoutes = require("./routes/admin.routes");
 const gamificationRoutes = require("./routes/gamification.routes");
 const quizRoutes = require("./routes/quiz.routes");
@@ -60,7 +59,6 @@ app.use("/api/plans", plansRoutes);
 app.use("/api/quiz", quizRoutes);
 app.use("/api/sorting", sortingRoutes);
 app.use("/api/help", helpRoutes); // Study Help — done by Khaing Khant Zaw
-app.use("/api/focus-sessions", focusRoutes);
 app.use("/api/email-otp", emailOtpRoutes);
 
 // --- 404 + error handling (must be last) ---
