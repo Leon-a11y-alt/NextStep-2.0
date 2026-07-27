@@ -8,22 +8,6 @@
 -- Postgres folds unquoted names to lowercase, so camelCase columns are
 -- double-quoted everywhere ("yearLevel", "createdAt", ...).
 
-<<<<<<< HEAD
-CREATE DATABASE IF NOT EXISTS nextstep
-  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE nextstep;
-
--- Drop in an order that respects the (logical) foreign keys.
-DROP TABLE IF EXISTS focus_sessions;
-DROP TABLE IF EXISTS calendar_tasks;
-DROP TABLE IF EXISTS comments;
-DROP TABLE IF EXISTS reports;
-DROP TABLE IF EXISTS habits;
-DROP TABLE IF EXISTS admin_requests;
-DROP TABLE IF EXISTS post_upvotes;
-DROP TABLE IF EXISTS posts;
-DROP TABLE IF EXISTS users;
-=======
 -- CASCADE so it works even if a teammate created these tables with real
 -- foreign-key constraints; we recreate everything from scratch anyway.
 DROP TABLE IF EXISTS sorting_items CASCADE;
@@ -45,7 +29,6 @@ DROP TABLE IF EXISTS post_upvotes CASCADE;
 DROP TABLE IF EXISTS post_downvotes CASCADE;
 DROP TABLE IF EXISTS posts CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
->>>>>>> 189b85227e2c974ee0574a4a4bc4b50171a4a331
 
 -- ---- Tables -------------------------------------------------------------
 
