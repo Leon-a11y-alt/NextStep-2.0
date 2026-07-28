@@ -1,5 +1,6 @@
 // Forum posts CRUD + upvote. Backed by the MySQL posts table.
 const postsRepo = require("../repositories/posts.repo");
+const { canModerateContent } = require("../lib/permissions"); // [added for mod role]
 
 // GET /api/posts?category=&search=
 // Returns approved posts, with optional category + search filtering.
@@ -48,7 +49,7 @@ async function updatePost(req, res) {
 
   const requesterId = req.body?.userId ?? req.query?.userId;
   const requesterRole = req.body?.role ?? req.query?.role;
-  if (requesterRole !== "admin" && existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
+  if (!canModerateContent(requesterRole) && existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
     return res.status(403).json({ error: "You can only edit your own posts." });
   }
 
@@ -65,7 +66,7 @@ async function deletePost(req, res) {
 
   const requesterId = req.body?.userId ?? req.query?.userId;
   const requesterRole = req.body?.role ?? req.query?.role;
-  if (requesterRole === "admin") {
+  if (canModerateContent(requesterRole)) {
     const removed = await postsRepo.remove(id);
     return res.json({ message: "Post deleted.", post: removed });
   }

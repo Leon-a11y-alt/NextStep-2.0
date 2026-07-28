@@ -10,12 +10,15 @@ import Badge, { StatusBadge } from "@/components/Badge";
 import DashboardStatCard from "@/components/DashboardStatCard";
 import ApiErrorBanner from "@/components/ApiErrorBanner";
 import { AdminAPI } from "@/lib/api";
+import { useAuth } from "@/lib/auth"; // [added for mod role]
+import { canManageUsers, roleLabel, ROLES } from "@/lib/permissions"; // [added for mod role]
 import {
   UsersIcon, ForumIcon, ChatIcon, TargetIcon,
   CheckIcon, XIcon, FlagIcon, ShieldIcon,
 } from "@/lib/icons";
 
 export default function AdminPage() {
+  const { user: me } = useAuth(); // [added for mod role] the logged-in caller
   const [stats, setStats] = useState(null);
   const [pending, setPending] = useState([]);
   const [reports, setReports] = useState([]);
@@ -42,7 +45,7 @@ export default function AdminPage() {
         AdminAPI.pendingPosts(),
         AdminAPI.reports(),
         AdminAPI.requests(),
-        AdminAPI.users(),
+        AdminAPI.users(me?.id), // [added for mod role]
       ]);
       setStats(s);
       setPending(p);
@@ -62,7 +65,7 @@ export default function AdminPage() {
     // Cleanup: clear any pending flash timeout if the user leaves the page,
     // so we never call setNotice on an unmounted component.
     return () => clearTimeout(noticeTimer.current);
-  }, []);
+  }, [me?.id]); // [added for mod role] refetch once the caller's id is known
 
   function flash(msg) {
     setNotice(msg);
@@ -132,11 +135,10 @@ export default function AdminPage() {
   }
 
   // ---- User management (Done by Zheng_Xian) ----
-  // Backend routes needed: POST /admin/users/:id/ban (toggles is_banned)
-  // and DELETE /admin/users/:id. Both must check the caller is an admin.
+  // [added for mod role follow-up] Wired up to the real backend routes now.
   function toggleBan(user) {
     withBusy(user.id, async () => {
-      await AdminAPI.toggleBan(user.id);
+      await AdminAPI.toggleBan(user.id, me?.id, me?.role);
       setUsers((prev) =>
         prev.map((u) => (u.id === user.id ? { ...u, isBanned: !u.isBanned } : u))
       );
@@ -147,7 +149,7 @@ export default function AdminPage() {
     // Native confirm() is fine for a school project; a modal would be nicer.
     if (!window.confirm(`Delete ${user.name}? This cannot be undone.`)) return;
     withBusy(user.id, async () => {
-      await AdminAPI.deleteUser(user.id);
+      await AdminAPI.deleteUser(user.id, me?.id, me?.role);
       setUsers((prev) => prev.filter((u) => u.id !== user.id));
       flash(`${user.name} deleted.`);
       refreshStats();
@@ -155,22 +157,23 @@ export default function AdminPage() {
   }
 
   // ---- Promote / demote (Done by Zheng_Xian) ----
-  // Backend route needed: PATCH /admin/users/:id/role  { role: "admin" | "user" }
-  // The backend MUST refuse to change the caller's OWN role — otherwise an
-  // admin could demote themselves and lock everyone out of this panel.
-  // GET /admin/users should also return isSelf: true on the caller's row,
-  // so we can hide the button in the UI (see JSX below).
-  function toggleRole(user) {
-    const promoting = user.role !== "admin";
-    if (!promoting && !window.confirm(`Remove admin rights from ${user.name}?`)) return;
+  // [added for mod role] Roles: user < moderator < admin. Only a full admin
+  // sees these buttons at all (gated in the JSX below); the backend also
+  // refuses the change if the caller isn't an admin, or is targeting their
+  // own row — that second check is what stops an admin from locking
+  // everyone (including themselves) out of the panel.
+  function changeRole(user, newRole) {
+    if (newRole === ROLES.USER && !window.confirm(`Remove ${roleLabel(user.role)} rights from ${user.name}?`)) return;
     withBusy(user.id, async () => {
-      await AdminAPI.setRole(user.id, promoting ? "admin" : "user");
+      await AdminAPI.setRole(user.id, newRole, me?.id, me?.role);
       setUsers((prev) =>
-        prev.map((u) =>
-          u.id === user.id ? { ...u, role: promoting ? "admin" : "user" } : u
-        )
+        prev.map((u) => (u.id === user.id ? { ...u, role: newRole } : u))
       );
-      flash(promoting ? `${user.name} is now an admin.` : `${user.name} is no longer an admin.`);
+      flash(
+        newRole === ROLES.USER
+          ? `${user.name} is no longer staff.`
+          : `${user.name} is now ${roleLabel(newRole).toLowerCase()}.`
+      );
     });
   }
 
@@ -339,6 +342,7 @@ export default function AdminPage() {
                     <div className="row gap-8">
                       <strong style={{ fontSize: 14 }}>{user.name}</strong>
                       {user.role === "admin" && <Badge color="violet">admin</Badge>}
+                      {user.role === "moderator" && <Badge color="teal">moderator</Badge>}
                       {user.isBanned && <Badge color="red">banned</Badge>}
                       {user.isSelf && <Badge color="blue">you</Badge>}
                     </div>
@@ -347,19 +351,41 @@ export default function AdminPage() {
                     </div>
                   </div>
                   <div className="row gap-8">
-                    {/* Promote/demote hidden on your own row — the backend
-                        also rejects self-demotion, this is just the UI half. */}
-                    {!user.isSelf && (
+                    {/* Role management: admin-only (moderators can view this
+                        page but not manage users) and hidden on your own
+                        row — the backend also rejects self-demotion, this
+                        is just the UI half. [added for mod role] */}
+                    {!user.isSelf && canManageUsers(me?.role) && user.role === "user" && (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        disabled={busyId === user.id}
+                        onClick={() => changeRole(user, ROLES.MODERATOR)}
+                      >
+                        <ShieldIcon size={15} /> Make moderator
+                      </Button>
+                    )}
+                    {!user.isSelf && canManageUsers(me?.role) && user.role === "moderator" && (
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        disabled={busyId === user.id}
+                        onClick={() => changeRole(user, ROLES.USER)}
+                      >
+                        <ShieldIcon size={15} /> Remove moderator
+                      </Button>
+                    )}
+                    {!user.isSelf && canManageUsers(me?.role) && (
                       <Button
                         size="sm"
                         variant={user.role === "admin" ? "danger" : "success"}
                         disabled={busyId === user.id}
-                        onClick={() => toggleRole(user)}
+                        onClick={() => changeRole(user, user.role === "admin" ? ROLES.USER : ROLES.ADMIN)}
                       >
                         <ShieldIcon size={15} /> {user.role === "admin" ? "Remove admin" : "Make admin"}
                       </Button>
                     )}
-                    {!user.isSelf && (
+                    {!user.isSelf && canManageUsers(me?.role) && (
                       <Button
                         size="sm"
                         variant={user.isBanned ? "success" : "danger"}
@@ -369,7 +395,7 @@ export default function AdminPage() {
                         {user.isBanned ? "Unban" : "Ban"}
                       </Button>
                     )}
-                    {!user.isSelf && (
+                    {!user.isSelf && canManageUsers(me?.role) && (
                       <Button
                         size="sm"
                         variant="danger"

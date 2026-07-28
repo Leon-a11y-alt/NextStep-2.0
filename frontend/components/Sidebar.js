@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { useMode } from "@/lib/mode";
+import { canViewAdminPanel } from "@/lib/permissions"; // [added for mod role]
 import { HomeIcon, ForumIcon, TrackerIcon, CalendarIcon, ShieldIcon, BookIcon, ClockIcon, SparkIcon, SettingsIcon, ChevronDownIcon } from "@/lib/icons";
 
 // Each link declares which app modes it belongs to (see lib/mode.js) and its
@@ -76,8 +77,8 @@ export default function Sidebar() {
         </div>
       )}
 
-      {/* Admin link only shows for admin accounts. */}
-      {user?.role === "admin" && (
+      {/* Admin link shows for admin and moderator accounts. */}
+      {canViewAdminPanel(user?.role) && (
         <>
           <div className="nav-section">Moderation</div>
           <Link

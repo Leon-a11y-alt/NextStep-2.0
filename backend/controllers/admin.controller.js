@@ -5,11 +5,89 @@ const calendarRepo = require("../repositories/calendar.repo");
 const commentsRepo = require("../repositories/comments.repo");
 const usersRepo = require("../repositories/users.repo");
 const adminRepo = require("../repositories/admin.repo");
+const { VALID_ROLES, canManageUsers } = require("../lib/permissions");
 
-// GET /api/admin/users
+// GET /api/admin/users?requesterId=
+// requesterId (optional) marks the caller's own row with isSelf: true, so
+// the frontend can hide "manage yourself" buttons on it.
 async function getUsers(req, res) {
   const users = await usersRepo.listAll();
-  res.json(users.map(({ password, ...u }) => u));
+  const requesterId = req.query?.requesterId;
+  res.json(
+    users.map(({ password, ...u }) => ({
+      ...u,
+      ...(requesterId !== undefined ? { isSelf: Number(u.id) === Number(requesterId) } : {}),
+    }))
+  );
+}
+
+// PATCH /api/admin/users/:id/role   body: { role, requesterId, requesterRole }
+// [added for mod role] Only a full admin may change roles, and an admin can
+// never change their own role (that would risk locking everyone else out).
+async function setUserRole(req, res) {
+  const id = Number(req.params.id);
+  const { role, requesterId, requesterRole } = req.body || {};
+
+  if (!canManageUsers(requesterRole)) {
+    return res.status(403).json({ error: "Only an admin can change user roles." });
+  }
+  if (requesterId !== undefined && Number(requesterId) === id) {
+    return res.status(403).json({ error: "You can't change your own role." });
+  }
+  if (!VALID_ROLES.has(role)) {
+    return res.status(400).json({ error: `Role must be one of: ${[...VALID_ROLES].join(", ")}.` });
+  }
+
+  const target = await usersRepo.findById(id);
+  if (!target) return res.status(404).json({ error: "User not found." });
+
+  const updated = await usersRepo.updateRole(id, role);
+  const { password, ...safeUser } = updated;
+  res.json(safeUser);
+}
+
+// POST /api/admin/users/:id/ban   body: { requesterId, requesterRole }
+// [added for mod role follow-up] Toggles isBanned. Admin-only, and you
+// can't ban yourself. Banning here only flips the flag — auth.controller's
+// login also checks it, so a banned user is actually blocked from signing
+// back in, not just labeled in the admin panel.
+async function toggleBan(req, res) {
+  const id = Number(req.params.id);
+  const { requesterId, requesterRole } = req.body || {};
+
+  if (!canManageUsers(requesterRole)) {
+    return res.status(403).json({ error: "Only an admin can ban or unban users." });
+  }
+  if (requesterId !== undefined && Number(requesterId) === id) {
+    return res.status(403).json({ error: "You can't ban yourself." });
+  }
+
+  const target = await usersRepo.findById(id);
+  if (!target) return res.status(404).json({ error: "User not found." });
+
+  const updated = await usersRepo.setBanned(id, !target.isBanned);
+  const { password, ...safeUser } = updated;
+  res.json(safeUser);
+}
+
+// DELETE /api/admin/users/:id   body: { requesterId, requesterRole }
+// [added for mod role follow-up] Admin-only, and you can't delete yourself.
+async function deleteUser(req, res) {
+  const id = Number(req.params.id);
+  const { requesterId, requesterRole } = req.body || {};
+
+  if (!canManageUsers(requesterRole)) {
+    return res.status(403).json({ error: "Only an admin can delete users." });
+  }
+  if (requesterId !== undefined && Number(requesterId) === id) {
+    return res.status(403).json({ error: "You can't delete your own account." });
+  }
+
+  const removed = await usersRepo.remove(id);
+  if (!removed) return res.status(404).json({ error: "User not found." });
+
+  const { password, ...safeUser } = removed;
+  res.json({ message: "User deleted.", user: safeUser });
 }
 
 // GET /api/admin/pending-posts
@@ -145,4 +223,7 @@ module.exports = {
   rejectRequest,
   getStats,
   getUsers,
+  setUserRole,
+  toggleBan,
+  deleteUser,
 };

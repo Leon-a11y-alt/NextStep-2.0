@@ -23,6 +23,7 @@ export const api = {
   get: (path) => request(path),
   post: (path, body) => request(path, { method: "POST", body: JSON.stringify(body) }),
   put: (path, body) => request(path, { method: "PUT", body: JSON.stringify(body || {}) }),
+  patch: (path, body) => request(path, { method: "PATCH", body: JSON.stringify(body || {}) }), // [added for mod role]
   del: (path, body) => request(path, { method: "DELETE", body: JSON.stringify(body || {}) }),
   baseUrl: API_URL,
 };
@@ -95,7 +96,10 @@ export const HelpAPI = {
 };
 
 export const AdminAPI = {
-  users: () => api.get("/api/admin/users"),
+  // [added for mod role] requesterId lets the backend mark the caller's own
+  // row with isSelf: true, so the UI can hide "manage yourself" buttons.
+  users: (requesterId) =>
+    api.get(`/api/admin/users${requesterId !== undefined ? `?requesterId=${requesterId}` : ""}`),
   pendingPosts: () => api.get("/api/admin/pending-posts"),
   approvePost: (id) => api.put(`/api/admin/posts/${id}/approve`),
   rejectPost: (id) => api.put(`/api/admin/posts/${id}/reject`),
@@ -105,4 +109,12 @@ export const AdminAPI = {
   approveRequest: (id) => api.put(`/api/admin/requests/${id}/approve`),
   rejectRequest: (id) => api.put(`/api/admin/requests/${id}/reject`),
   stats: () => api.get("/api/admin/stats"),
+  // [added for mod role] role: "user" | "moderator" | "admin"
+  setRole: (id, role, requesterId, requesterRole) =>
+    api.patch(`/api/admin/users/${id}/role`, { role, requesterId, requesterRole }),
+  // [added for mod role follow-up]
+  toggleBan: (id, requesterId, requesterRole) =>
+    api.post(`/api/admin/users/${id}/ban`, { requesterId, requesterRole }),
+  deleteUser: (id, requesterId, requesterRole) =>
+    api.del(`/api/admin/users/${id}`, { requesterId, requesterRole }),
 };
