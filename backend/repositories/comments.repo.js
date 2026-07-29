@@ -28,15 +28,28 @@ function isCommentDislikedByUser(commentId, userId) {
 }
 
 // All comments, or just those for a given post when postId is provided.
-async function find(postId) {
+async function find(postId, sortBy = "newest") {
   if (postId === undefined || postId === null || postId === "") {
-    const [rows] = await pool.query("SELECT * FROM comments ORDER BY id");
+    let sql = "SELECT * FROM comments";
+    if (sortBy === "mostLiked") {
+      sql += " ORDER BY likes DESC, id DESC";
+    } else if (sortBy === "mostDisliked") {
+      sql += " ORDER BY dislikes DESC, id DESC";
+    } else {
+      sql += " ORDER BY id";
+    }
+    const [rows] = await pool.query(sql);
     return rows;
   }
-  const [rows] = await pool.query(
-    'SELECT * FROM comments WHERE "postId" = ? ORDER BY id',
-    [Number(postId)]
-  );
+  let sql = 'SELECT * FROM comments WHERE "postId" = ?';
+  if (sortBy === "mostLiked") {
+    sql += " ORDER BY likes DESC, id DESC";
+  } else if (sortBy === "mostDisliked") {
+    sql += " ORDER BY dislikes DESC, id DESC";
+  } else {
+    sql += " ORDER BY id";
+  }
+  const [rows] = await pool.query(sql, [Number(postId)]);
   return rows;
 }
 

@@ -1,5 +1,8 @@
 // Tiny fetch wrapper used by every page to talk to the Express backend.
 // Base URL comes from an env var so it is easy to change for deployment.
+// 4000 must match backend/.env (PORT=4000), backend/server.js and
+// .env.local.example — feature/focus-timer briefly had 5000, which silently
+// broke every API call in the browser ("Failed to fetch").
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 async function request(path, options = {}) {
@@ -47,14 +50,21 @@ export const EmailOtpAPI = {
 export const PostsAPI = {
   // forumType ("study" | "habit") keeps the two forums apart — the backend
   // filters on it in SQL, so the other forum's posts are never sent.
-  list: (category, search, userId, forumType) => {
+  list: (category, search, userId, forumType, sortBy) => {
     const params = new URLSearchParams();
     if (forumType) params.set("forumType", forumType);
     if (category && category !== "All") params.set("category", category);
     if (search) params.set("search", search);
     if (userId) params.set("userId", String(userId));
+    if (sortBy) params.set("sortBy", sortBy);
     const q = params.toString();
     return api.get(`/api/posts${q ? "?" + q : ""}`);
+  },
+  getById: (id, userId) => {
+    const params = new URLSearchParams();
+    if (userId) params.set("userId", String(userId));
+    const q = params.toString();
+    return api.get(`/api/posts/${id}${q ? "?" + q : ""}`);
   },
   // { study: [...], habit: [...] } — the category chips for each forum.
   categories: () => api.get("/api/posts/categories"),
@@ -66,8 +76,17 @@ export const PostsAPI = {
 };
 
 export const CommentsAPI = {
-  list: (postId) => api.get(`/api/comments?postId=${postId}`),
-  all: () => api.get("/api/comments"),          // every comment (grouped by post on the forum) — Andrea Ho
+  list: (postId, sortBy) => {
+    const params = new URLSearchParams();
+    if (postId) params.set("postId", postId);
+    if (sortBy) params.set("sortBy", sortBy);
+    const q = params.toString();
+    return api.get(`/api/comments${q ? "?" + q : ""}`);
+  },
+  all: (sortBy) => {
+    if (sortBy) return api.get(`/api/comments?sortBy=${sortBy}`);
+    return api.get("/api/comments");          // every comment (grouped by post on the forum) — Andrea Ho
+  },
   create: (payload) => api.post("/api/comments", payload),
   update: (id, payload) => api.put(`/api/comments/${id}`, payload),
   remove: (id, userId) => api.del(`/api/comments/${id}`, { userId }),
@@ -129,22 +148,16 @@ export const QuizAPI = {
   topics: (userId) => api.get(`/api/quiz?userId=${userId}`),
 };
 
-// Speed Sorting Challenge: sets of terms to sort into category bins. Built-in
-// sets match the student's study plans; uploaded sets are parsed from a revision
-// file. Returns { fromPlans, sets: [{ id, title, emoji, source, categories, items }] }.
+// SpeedPlay: upload your notes text and get back an AI-generated quiz.
 export const SortingAPI = {
-  list: (userId) => api.get(`/api/sorting?userId=${userId}`),
-  upload: (payload) => api.post("/api/sorting/upload", payload), // { userId, filename, content }
-  remove: (id, userId) => api.del(`/api/sorting/${id}`, { userId }),
+  upload: (payload) => api.post("/api/sorting/upload", payload), // { filename, content } -> { title, questions }
 };
 
 export const AdminAPI = {
-  // `me` is the logged-in admin's id, so the API can flag their own row (isSelf)
-  // and refuse self-ban / self-delete / self-demote on the server.
-  users: (me) => api.get(`/api/admin/users${me ? `?me=${me}` : ""}`),
-  setRole: (id, role, me) => api.patch(`/api/admin/users/${id}/role`, { role, me }),
-  toggleBan: (id, me) => api.post(`/api/admin/users/${id}/ban`, { me }),
-  deleteUser: (id, me) => api.del(`/api/admin/users/${id}`, { me }),
+  // [added for mod role] requesterId lets the backend mark the caller's own
+  // row with isSelf: true, so the UI can hide "manage yourself" buttons.
+  users: (requesterId) =>
+    api.get(`/api/admin/users${requesterId !== undefined ? `?requesterId=${requesterId}` : ""}`),
   pendingPosts: () => api.get("/api/admin/pending-posts"),
   approvePost: (id) => api.put(`/api/admin/posts/${id}/approve`),
   rejectPost: (id) => api.put(`/api/admin/posts/${id}/reject`),
@@ -154,4 +167,12 @@ export const AdminAPI = {
   approveRequest: (id) => api.put(`/api/admin/requests/${id}/approve`),
   rejectRequest: (id) => api.put(`/api/admin/requests/${id}/reject`),
   stats: () => api.get("/api/admin/stats"),
+  // [added for mod role] role: "user" | "moderator" | "admin"
+  setRole: (id, role, requesterId, requesterRole) =>
+    api.patch(`/api/admin/users/${id}/role`, { role, requesterId, requesterRole }),
+  // [added for mod role follow-up]
+  toggleBan: (id, requesterId, requesterRole) =>
+    api.post(`/api/admin/users/${id}/ban`, { requesterId, requesterRole }),
+  deleteUser: (id, requesterId, requesterRole) =>
+    api.del(`/api/admin/users/${id}`, { requesterId, requesterRole }),
 };

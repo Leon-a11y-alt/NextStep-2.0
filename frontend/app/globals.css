@@ -33,6 +33,7 @@
   --green: #059669;  --green-050: rgba(5, 150, 105, 0.10);
   --amber: #b45309;  --amber-050: rgba(245, 158, 11, 0.14);
   --red: #dc2626;    --red-050: rgba(220, 38, 38, 0.08);
+  --teal: #0d9488;   --teal-050: rgba(13, 148, 136, 0.10); /* [added for mod role] */
 
   /* ---- Radii ---- */
   --radius-lg: 22px;
@@ -157,6 +158,7 @@ code { background: var(--surface-3); padding: 2px 6px; border-radius: 6px; font-
 .badge-amber { background: var(--amber-050); color: var(--amber); }
 .badge-red { background: var(--red-050); color: var(--red); }
 .badge-violet { background: var(--violet-050); color: var(--violet); }
+.badge-teal { background: var(--teal-050); color: var(--teal); } /* [added for mod role] */
 .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 
 /* ---------- Forms ---------- */

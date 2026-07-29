@@ -8,6 +8,7 @@ import { useMode } from "@/lib/mode";
 import Navbar from "./Navbar";
 import Sidebar from "./Sidebar";
 import { BookIcon, TargetIcon } from "@/lib/icons";
+import { canViewAdminPanel } from "@/lib/permissions"; // [added for mod role]
 
 // Pages that only exist in one mode: switching away from their mode sends
 // the user back to the dashboard instead of leaving them on a hidden page.
@@ -45,11 +46,11 @@ export default function AppShell({ title, subtitle, actions, children, adminOnly
   useEffect(() => {
     if (!ready) return;
     if (!user) router.replace("/login");
-    else if (adminOnly && user.role !== "admin") router.replace("/dashboard");
+    else if (adminOnly && !canViewAdminPanel(user.role)) router.replace("/dashboard");
   }, [ready, user, adminOnly, router]);
 
   // While auth is resolving (or redirecting), show a light placeholder.
-  if (!ready || !user || (adminOnly && user.role !== "admin")) {
+  if (!ready || !user || (adminOnly && !canViewAdminPanel(user.role))) {
     return (
       <div className="app-shell">
         <Navbar />
@@ -67,24 +68,26 @@ export default function AppShell({ title, subtitle, actions, children, adminOnly
           className="main"
           style={{ "--accent": ACCENTS[Object.keys(ACCENTS).find((k) => pathname.startsWith(k))] || "var(--primary)" }}
         >
-          <div className="mode-switch" role="tablist" aria-label="App mode">
-            <button
-              role="tab"
-              aria-selected={mode === "study"}
-              className={"mode-btn" + (mode === "study" ? " active" : "")}
-              onClick={() => switchMode("study")}
-            >
-              <BookIcon size={15} /> Study
-            </button>
-            <button
-              role="tab"
-              aria-selected={mode === "habit"}
-              className={"mode-btn" + (mode === "habit" ? " active" : "")}
-              onClick={() => switchMode("habit")}
-            >
-              <TargetIcon size={15} /> Habit
-            </button>
-          </div>
+          {!pathname.startsWith("/progress") && (
+            <div className="mode-switch" role="tablist" aria-label="App mode">
+              <button
+                role="tab"
+                aria-selected={mode === "study"}
+                className={"mode-btn" + (mode === "study" ? " active" : "")}
+                onClick={() => switchMode("study")}
+              >
+                <BookIcon size={15} /> Study
+              </button>
+              <button
+                role="tab"
+                aria-selected={mode === "habit"}
+                className={"mode-btn" + (mode === "habit" ? " active" : "")}
+                onClick={() => switchMode("habit")}
+              >
+                <TargetIcon size={15} /> Habit
+              </button>
+            </div>
+          )}
           <div className="page-head row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
             <div>
               <h1 className="page-title">{title}</h1>

@@ -1,95 +1,152 @@
 "use client";
-// Playground — a dark, neon ARCADE dashboard (theme scoped to this page only).
-// One immersive stage with a live animated background, your study buddy, and one
-// big button into the game. No stat clutter, no abstract currency — just "press
-// play". The game (Flash Quiz Arcade) is the whole feature.
-//
-// Real progress (level / XP / streak) still comes from the backend; the game's
-// high score is tracked per-user in the browser (usePlayground).
+
+/*
+|--------------------------------------------------------------------------
+| SpeedPlay Page
+|--------------------------------------------------------------------------
+| This page displays the SpeedPlay landing screen.
+| When the user clicks the "PLAY NOW" button, the SpeedPlay game modal opens.
+| The actual game logic (AI quiz generation, upload, timer, scoring)
+| is handled inside the SpeedPlay component.
+|--------------------------------------------------------------------------
+*/
+
 import React, { useState } from "react";
+
+// Main application layout (header, sidebar, etc.)
 import AppShell from "@/components/AppShell";
-import { useAuth } from "@/lib/auth";
-import { useGamification } from "@/components/gamification/useGamification";
-import { usePlayground } from "@/lib/playground";
-import Companion from "@/components/gamification/playground/Companion";
-import ArcadeBackground from "@/components/gamification/playground/ArcadeBackground";
-import SpeedSort from "@/components/gamification/playground/SpeedSort";
-import { ACCESSORIES } from "@/lib/playground";
-import { PlayIcon, TrophyIcon } from "@/lib/icons";
 
-function moodFor(streak, leveledUp) {
-  if (leveledUp) return "excited";
-  if (streak.current >= 7) return "proud";
-  if (streak.studiedToday) return "happy";
-  return "sleepy";
-}
+// SpeedPlay game component (appears after clicking PLAY NOW)
+import SpeedPlay from "@/components/gamification/playground/SpeedPlay";
 
-export default function PlaygroundPage() {
-  const { user } = useAuth();
-  const { data, demo, celebrate } = useGamification(user, { track: true });
-  const { state: pg, actions } = usePlayground(user);
+// Play icon displayed inside the button
+import { PlayIcon } from "@/lib/icons";
+
+/*
+|--------------------------------------------------------------------------
+| SpeedPlayPage Component
+|--------------------------------------------------------------------------
+| This is the main page shown when users open SpeedPlay.
+|--------------------------------------------------------------------------
+*/
+export default function SpeedPlayPage() {
+
+  /*
+  --------------------------------------------------------------------------
+  | quizOpen State
+  --------------------------------------------------------------------------
+  | Stores whether the SpeedPlay game is currently open.
+  |
+  | false = Only show the landing page.
+  | true  = Display the SpeedPlay game component.
+  --------------------------------------------------------------------------
+  */
   const [quizOpen, setQuizOpen] = useState(false);
 
-  if (!data || !pg) {
-    return (
-      <AppShell title="Playground" subtitle="Loading the arcade…">
-        <p className="muted">Warming things up…</p>
-      </AppShell>
-    );
-  }
-
-  const mood = moodFor(data.streak, celebrate.leveledUp);
-  const accessory = ACCESSORIES.find((a) => a.id === pg.accessory)?.emoji || "";
-  const name = pg.companion.name;
-
-  const sub = data.streak.studiedToday
-    ? `Nice work today — think you can beat your high score?`
-    : `Sort concepts into the right bins before the clock runs out.`;
-
+  /*
+  --------------------------------------------------------------------------
+  | Render User Interface
+  --------------------------------------------------------------------------
+  */
   return (
-    <AppShell title="Playground" subtitle="Enter the arcade and turn studying into a game.">
-      {celebrate.leveledUp && (
-        <div className="gm-levelup">
-          <div className="stat-icon" style={{ background: "var(--surface)", color: "var(--primary-600)" }}>
-            <TrophyIcon size={22} />
-          </div>
-          <div>
-            <div style={{ fontWeight: 780 }}>Level up! You reached Level {data.level.level}</div>
-            <div className="small muted">{data.level.title} — {name} is thrilled.</div>
-          </div>
-        </div>
-      )}
 
-      {demo && (
-        <div className="banner mb-24">Showing demo data — the gamification API isn&apos;t reachable right now.</div>
-      )}
+    /*
+    ------------------------------------------------------------------------
+    | AppShell
+    ------------------------------------------------------------------------
+    | Provides the overall application layout such as:
+    | - Header
+    | - Navigation
+    | - Page title
+    | - Subtitle
+    ------------------------------------------------------------------------
+    */
+    <AppShell
+      title="SpeedPlay"
+      subtitle="Upload your notes and let the AI quiz you."
+    >
 
-      {/* The arcade stage: live background + buddy + one big Play button. */}
+      {/* Main arcade-style landing page */}
       <div className="pg-stage-arcade">
-        <ArcadeBackground />
-        <div className="pg-arcade-glow-ring" aria-hidden="true" />
+
+        {/* Container holding all landing page content */}
         <div className="pg-arcade-content">
-          <span className="pg-arcade-eyebrow">Learning Arcade</span>
-          <div className="pg-arcade-buddy">
-            <Companion mood={mood} accessory={accessory} size={150} />
-          </div>
-          <h2 className="pg-arcade-title">Speed Sort</h2>
-          <p className="pg-arcade-sub">{sub}</p>
-          <button className="pg-arcade-play" onClick={() => setQuizOpen(true)}>
-            <PlayIcon size={20} /> PLAY NOW
+
+          {/* Small label shown above the title */}
+          <span className="pg-arcade-eyebrow">
+            Learning Arcade
+          </span>
+
+          {/* Main page title */}
+          <h2 className="pg-arcade-title">
+            SpeedPlay
+          </h2>
+
+          {/* Short explanation of how the game works */}
+          <p className="pg-arcade-sub">
+            Upload your notes — the AI writes the questions.
+            Answer as many as you can in 20 seconds.
+          </p>
+
+          {/*
+          ------------------------------------------------------------------
+          | PLAY NOW Button
+          ------------------------------------------------------------------
+          | When clicked:
+          | 1. setQuizOpen(true) updates the state.
+          | 2. React re-renders the page.
+          | 3. The SpeedPlay component becomes visible.
+          ------------------------------------------------------------------
+          */}
+          <button
+            className="pg-arcade-play"
+            onClick={() => setQuizOpen(true)}
+          >
+            <PlayIcon size={20} />
+            {" "}PLAY NOW
           </button>
-          <div className="pg-arcade-hint">Drag terms into bins · 60 seconds · upload your own revision file</div>
+
+          {/* Small instruction shown below the button */}
+          <div className="pg-arcade-hint">
+            Upload your .txt notes · AI writes the quiz · 20 seconds
+          </div>
+
         </div>
       </div>
 
+      {/*
+      ----------------------------------------------------------------------
+      | Conditional Rendering
+      ----------------------------------------------------------------------
+      | The SpeedPlay component is only displayed when quizOpen is true.
+      |
+      | quizOpen = false
+      |    → Only the landing page is shown.
+      |
+      | quizOpen = true
+      |    → SpeedPlay game opens.
+      ----------------------------------------------------------------------
+      */}
       {quizOpen && (
-        <SpeedSort
-          userId={user.id}
+
+        <SpeedPlay
+
+          /*
+          --------------------------------------------------------------
+          | onClose Function
+          --------------------------------------------------------------
+          | Passed to the SpeedPlay component.
+          |
+          | When the user closes the game,
+          | setQuizOpen(false) hides the SpeedPlay component and returns
+          | to the landing page.
+          --------------------------------------------------------------
+          */
           onClose={() => setQuizOpen(false)}
-          onComplete={(score) => actions.recordQuiz(score)}
-          personalBest={pg.totals.bestQuiz}
         />
+
       )}
+
     </AppShell>
   );
 }

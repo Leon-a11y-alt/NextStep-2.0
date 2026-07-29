@@ -15,10 +15,9 @@ router.put("/requests/:id/approve", asyncHandler(c.approveRequest));
 router.put("/requests/:id/reject", asyncHandler(c.rejectRequest));
 
 router.get("/stats", asyncHandler(c.getStats));
-
 router.get("/users", asyncHandler(c.getUsers));
-router.patch("/users/:id/role", asyncHandler(c.setUserRole));
-router.post("/users/:id/ban", asyncHandler(c.banUser));
-router.delete("/users/:id", asyncHandler(c.deleteUser));
+router.patch("/users/:id/role", asyncHandler(c.setUserRole)); // [added for mod role]
+router.post("/users/:id/ban", asyncHandler(c.toggleBan));     // [added for mod role follow-up]
+router.delete("/users/:id", asyncHandler(c.deleteUser));      // [added for mod role follow-up]
 
 module.exports = router;

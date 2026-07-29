@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { useMode } from "@/lib/mode";
+import { canViewAdminPanel } from "@/lib/permissions"; // moderator role (charles)
 import { HomeIcon, ForumIcon, TrackerIcon, CalendarIcon, ShieldIcon, BookIcon, ClockIcon, SparkIcon, SettingsIcon, ChevronDownIcon, TrophyIcon } from "@/lib/icons";
 
 // Each link declares which app modes it belongs to (see lib/mode.js) and its
@@ -15,8 +16,9 @@ const links = [
   { href: "/tracker", label: "Habit Tracker", icon: TrackerIcon, modes: ["habit"], fg: "#ea580c", bg: "rgba(234, 88, 12, 0.12)" },
   { href: "/plans", label: "Study Plans", icon: BookIcon, modes: ["study"], fg: "#7c3aed", bg: "rgba(124, 58, 237, 0.12)" },
   { href: "/calendar", label: "Calendar", icon: CalendarIcon, modes: ["study", "habit"], fg: "#059669", bg: "rgba(5, 150, 105, 0.12)" },
-  { href: "/timer", label: "Focus Timer", icon: ClockIcon, modes: ["study"], fg: "#e11d48", bg: "rgba(225, 29, 72, 0.10)" },
-  { href: "/progress", label: "Playground", icon: TrophyIcon, modes: ["study", "habit"], fg: "#ca8a04", bg: "rgba(202, 138, 4, 0.14)" },
+  // both-modes timer comes from feature/focus-timer; the SpeedPlay rename from feature/speedplay
+  { href: "/timer", label: "Focus Timer", icon: ClockIcon, modes: ["study", "habit"], fg: "#e11d48", bg: "rgba(225, 29, 72, 0.10)" },
+  { href: "/progress", label: "SpeedPlay", icon: TrophyIcon, modes: ["study", "habit"], fg: "#ca8a04", bg: "rgba(202, 138, 4, 0.14)" },
   { href: "/help", label: "Study Help", icon: SparkIcon, modes: ["study"], fg: "#d97706", bg: "rgba(217, 119, 6, 0.12)" },
 ];
 
@@ -77,8 +79,8 @@ export default function Sidebar() {
         </div>
       )}
 
-      {/* Admin link only shows for admin accounts. */}
-      {user?.role === "admin" && (
+      {/* Admin link shows for admin and moderator accounts. */}
+      {canViewAdminPanel(user?.role) && (
         <>
           <div className="nav-section">Moderation</div>
           <Link
