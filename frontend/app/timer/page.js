@@ -14,10 +14,13 @@ import Button from "@/components/Button";
 import ApiErrorBanner from "@/components/ApiErrorBanner";
 import { useAuth } from "@/lib/auth";
 import { HabitsAPI, FocusAPI, PlansAPI } from "@/lib/api";
-import { readPrefs } from "@/lib/prefs";
 import { PlayIcon, PauseIcon, ClockIcon, CheckIcon } from "@/lib/icons";
 
-const DURATIONS = [15, 25, 45, 60]; // minutes
+const POMODORO_MODES = {
+  focus: { label: "Pomodoro", minutes: 25 },
+  shortBreak: { label: "Short Break", minutes: 5 },
+  longBreak: { label: "Long Break", minutes: 15 },
+};
 
 // Demo sessions shown until the backend endpoint exists.
 const DEMO_SESSIONS = [
@@ -43,10 +46,15 @@ export default function TimerPage() {
 
   // Timer state. `target` is "" (free focus), "habit:<id>" or "plan:<id>".
   const [target, setTarget] = useState("");
+  const [mode, setMode] = useState("focus");
   const [minutes, setMinutes] = useState(25);
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
   const [running, setRunning] = useState(false);
+  const [customMinutes, setCustomMinutes] = useState("");
+  const [completedFocusSessions, setCompletedFocusSessions] = useState(0);
+  const [soundVolume, setSoundVolume] = useState(0.7);
   const tick = useRef(null);
+  const audioContext = useRef(null);
 
   async function load() {
     if (!user) return;
@@ -64,18 +72,21 @@ export default function TimerPage() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [user]);
 
-  // Start from the default session length chosen in Settings.
+  // If we arrived from Habit Tracker or Study Plans, pre-select that item. (Khaing Khant Zaw)
   useEffect(() => {
-    const m = readPrefs().timerDefault;
-    if (DURATIONS.includes(m)) { setMinutes(m); setSecondsLeft(m * 60); }
-  }, []);
+    const params = new URLSearchParams(window.location.search);
+    const habitId = params.get("habit");
+    const planId = params.get("plan");
 
-  // If we arrived from the Study Plans page (/timer?plan=<id>), pre-select
-  // that plan as the focus target once the plans have loaded. (Khaing Khant Zaw)
-  useEffect(() => {
-    const planId = new URLSearchParams(window.location.search).get("plan");
-    if (planId && plans.some((p) => String(p.id) === planId)) setTarget(`plan:${planId}`);
-  }, [plans]);
+    if (habitId && habits.some((h) => String(h.id) === habitId)) {
+      setTarget(`habit:${habitId}`);
+      return;
+    }
+
+    if (planId && plans.some((p) => String(p.id) === planId)) {
+      setTarget(`plan:${planId}`);
+    }
+  }, [habits, plans]);
 
   // Countdown loop.
   useEffect(() => {
@@ -90,12 +101,97 @@ export default function TimerPage() {
     // eslint-disable-next-line
   }, [running]);
 
+  useEffect(() => {
+    const prefix =
+      mode === "shortBreak"
+        ? "☕"
+        : mode === "longBreak"
+          ? "🌴"
+          : "🍅";
+
+    const label =
+      mode === "shortBreak"
+        ? "Break"
+        : mode === "longBreak"
+          ? "Break"
+          : "Focus";
+
+    document.title = `${prefix} ${fmt(secondsLeft)} ${label} - NextStep`;
+
+    return () => {
+      document.title = "NextStep | Focus Timer";
+    };
+  }, [running, secondsLeft, mode]);
+
   function flash(msg) { setNotice(msg); setTimeout(() => setNotice(""), 3000); }
 
-  function pickDuration(m) {
-    setMinutes(m);
-    setSecondsLeft(m * 60);
+  function prepareAudio() {
+    if (!audioContext.current) {
+      audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    if (audioContext.current.state === "suspended") {
+      audioContext.current.resume();
+    }
+  }
+
+  function playTimerSound() {
+    const context = audioContext.current;
+    if (!context) return;
+
+    const startAt = context.currentTime;
+
+    [0, 0.25, 0.5].forEach((delay) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+
+      oscillator.type = "sine";
+      oscillator.frequency.value = 880;
+
+      gain.gain.setValueAtTime(0.0001, startAt + delay);
+      gain.gain.exponentialRampToValueAtTime(soundVolume, startAt + delay + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + delay + 0.18);
+
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+
+      oscillator.start(startAt + delay);
+      oscillator.stop(startAt + delay + 0.2);
+    });
+  }
+
+  function switchMode(nextMode) {
+    const nextMinutes = POMODORO_MODES[nextMode].minutes;
+
+    setMode(nextMode);
+    setMinutes(nextMinutes);
+    setSecondsLeft(nextMinutes * 60);
     setRunning(false);
+  }
+
+  function applyCustomDuration() {
+    const value = Number(customMinutes);
+
+    if (!Number.isInteger(value) || value < 1 || value > 240) {
+      setError("Custom focus time must be between 1 and 240 minutes.");
+      return;
+    }
+
+    setError("");
+    setMode("custom");
+    setMinutes(value);
+    setSecondsLeft(value * 60);
+    setRunning(false);
+  }
+
+  function testTimer() {
+    setRunning(false);
+    setSecondsLeft(5);
+  }
+
+  function startTimer() {
+    prepareAudio();
+    setRunning(true);
   }
 
   function reset() {
@@ -111,6 +207,15 @@ export default function TimerPage() {
 
   async function handleSessionDone(early = false) {
     setRunning(false);
+
+    // Breaks are not stored as focus sessions.
+    if (mode === "shortBreak" || mode === "longBreak") {
+      playTimerSound();
+      switchMode("focus");
+      flash("Break finished. It is time for another focus session.");
+      return;
+    }
+
     const spentMin = Math.max(1, Math.round((minutes * 60 - secondsLeft) / 60)) || minutes;
     const entry = {
       userId: user.id,
@@ -120,17 +225,38 @@ export default function TimerPage() {
       minutes: early ? spentMin : minutes,
       date: new Date().toISOString().slice(0, 10),
     };
+
     if (demoMode) {
       setSessions((prev) => [{ id: Date.now(), ...entry }, ...prev]);
     } else {
       try { await FocusAPI.create(entry); load(); }
       catch { setSessions((prev) => [{ id: Date.now(), ...entry }, ...prev]); }
     }
-    setSecondsLeft(minutes * 60);
-    flash(`Session logged: ${entry.minutes} min on "${entry.habitName}"${habit ? " — progress updated" : ""}`);
-    // BACKEND OWNER TODO: on the server, a logged session for a habit should
+
+    if (early) {
+      setSecondsLeft(minutes * 60);
+      flash(`Session logged: ${entry.minutes} min on "${entry.habitName}"${habit ? " — progress updated" : ""}`);
+      return;
+    }
+
+    playTimerSound();
+
+    const nextCompletedCount = completedFocusSessions + 1;
+    const nextMode = nextCompletedCount % 4 === 0 ? "longBreak" : "shortBreak";
+
+    setCompletedFocusSessions(nextCompletedCount);
+    switchMode(nextMode);
+
+    flash(
+      nextMode === "longBreak"
+        ? `Focus session completed. Take a ${POMODORO_MODES.longBreak.minutes}-minute long break.`
+        : `Focus session completed. Take a ${POMODORO_MODES.shortBreak.minutes}-minute short break.`
+    // BACKEND TODO: on the server, a logged session for a habit should
     // also bump that habit's progress (e.g. +10% per completed session).
+    );
   }
+
+
 
   const today = new Date().toISOString().slice(0, 10);
   const todayMin = sessions.filter((s) => s.date === today).reduce((n, s) => n + s.minutes, 0);
@@ -140,7 +266,7 @@ export default function TimerPage() {
   return (
     <AppShell
       title="Focus Timer"
-      subtitle="Pick a habit or plan, focus, and every session is logged to your progress."
+      subtitle="Use structured Pomodoro focus sessions and breaks while tracking progress for your habits and study plans."
     >
       <ApiErrorBanner error={error} onRetry={load} />
       {notice && <div className="banner mb-16" style={{ background: "var(--green-050)", color: "var(--green)", borderColor: "rgba(16,185,129,0.3)" }}>{notice}</div>}
@@ -181,31 +307,124 @@ export default function TimerPage() {
           </div>
 
           <div className="chip-row mb-16" style={{ justifyContent: "center" }}>
-            {DURATIONS.map((m) => (
-              <button key={m} className={"filter-chip" + (minutes === m ? " active" : "")} onClick={() => pickDuration(m)} disabled={running}>
-                {m} min
+            {Object.entries(POMODORO_MODES).map(([key, item]) => (
+              <button
+                key={key}
+                className={"filter-chip" + (mode === key ? " active" : "")}
+                onClick={() => switchMode(key)}
+                disabled={running}
+              >
+                {item.label}
               </button>
             ))}
+          </div>
+
+          <div className="row gap-8 mb-16" style={{ justifyContent: "center", alignItems: "center" }}>
+            <input
+              className="input"
+              type="number"
+              min="1"
+              max="240"
+              value={customMinutes}
+              onChange={(e) => setCustomMinutes(e.target.value)}
+              placeholder="Custom minutes"
+              disabled={running}
+              style={{ width: 160 }}
+            />
+            <Button size="sm" type="button" onClick={applyCustomDuration} disabled={running || !customMinutes}>
+              Set custom timer
+            </Button>
+          </div>
+
+          <div className="row gap-8 mb-16" style={{ justifyContent: "center" }}>
+            <Button
+              size="sm"
+              type="button"
+              onClick={testTimer}
+              disabled={running}
+            >
+              Test for demo (5s)
+            </Button>
+          </div>
+
+          <div
+            className="field-group mb-16"
+            style={{
+              maxWidth: 280,
+              margin: "0 auto",
+              textAlign: "left",
+            }}
+          >
+            <label className="field">
+                Notification Volume ({Math.round(soundVolume * 400)}%)
+            </label>
+
+            <input
+              type="range"
+              min="0"
+              max="0.5"
+              step="0.05"
+              value={soundVolume}
+              onChange={(e) => setSoundVolume(Number(e.target.value))}
+              style={{ width: "100%" }}
+            />
+
+            <Button
+              size="sm"
+              type="button"
+              style={{ marginTop: 10 }}
+              onClick={() => {
+                prepareAudio();
+                playTimerSound();
+              }}
+            >
+              Test sound
+            </Button>
+          </div>
+
+          <div className="small mb-8" style={{ fontWeight: 700, color: "var(--primary)" }}>
+            {mode === "custom" ? "Custom Focus" : POMODORO_MODES[mode].label}
           </div>
 
           <div style={{ fontSize: 72, fontWeight: 800, letterSpacing: "-0.03em", fontVariantNumeric: "tabular-nums", margin: "8px 0" }}>
             {fmt(secondsLeft)}
           </div>
-          <div className="mb-16"><div className="progress"><span style={{ width: `${pct}%` }} /></div></div>
 
-          <div className="row gap-8" style={{ justifyContent: "center" }}>
+          <div className="row gap-8" style={{ justifyContent: "center", flexWrap: "wrap" }}>
             {!running ? (
-              <Button variant="primary" onClick={() => setRunning(true)}><PlayIcon size={16} /> {secondsLeft < minutes * 60 ? "Resume" : "Start focus"}</Button>
+              <Button variant="primary" onClick={startTimer}>
+                <PlayIcon size={16} />
+                {secondsLeft < minutes * 60
+                  ? "Resume"
+                  : mode === "shortBreak" || mode === "longBreak"
+                    ? "Start break"
+                    : "Start focus"}
+              </Button>
             ) : (
               <Button onClick={() => setRunning(false)}><PauseIcon size={16} /> Pause</Button>
             )}
+
+            {secondsLeft < minutes * 60 && (mode === "focus" || mode === "custom") && (
+              <Button variant="success" onClick={() => handleSessionDone(true)}>
+                <CheckIcon size={16} /> End &amp; log
+              </Button>
+            )}
+
+            {secondsLeft < minutes * 60 && (mode === "shortBreak" || mode === "longBreak") && (
+              <Button onClick={() => switchMode("focus")}>
+                Skip break
+              </Button>
+            )}
+
             {secondsLeft < minutes * 60 && (
-              <>
-                <Button variant="success" onClick={() => handleSessionDone(true)}><CheckIcon size={16} /> End &amp; log</Button>
-                <Button variant="danger" onClick={reset}>Reset</Button>
-              </>
+              <Button variant="danger" onClick={reset}>Reset</Button>
             )}
           </div>
+          
+          <p className="small muted mt-16">
+            Pomodoro cycle: {completedFocusSessions % 4}/4 focus sessions completed
+          </p>
+
           {habit && <p className="small muted mt-16">Finishing this session updates the progress of <strong>{habit.name}</strong>.</p>}
           {plan && <p className="small muted mt-16">Focusing on your study plan <strong>{plan.name}</strong>.</p>}
         </Card>

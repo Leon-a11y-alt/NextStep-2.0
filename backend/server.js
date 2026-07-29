@@ -52,13 +52,13 @@ app.use("/api/posts", postsRoutes);
 app.use("/api/comments", commentsRoutes);
 app.use("/api/habits", habitsRoutes);
 app.use("/api/calendar", calendarRoutes);
+app.use("/api/focus-sessions", focusRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/gamification", gamificationRoutes);
 app.use("/api/plans", plansRoutes);
 app.use("/api/quiz", quizRoutes);
 app.use("/api/sorting", sortingRoutes);
 app.use("/api/help", helpRoutes); // Study Help — done by Khaing Khant Zaw
-app.use("/api/focus-sessions", focusRoutes);
 app.use("/api/email-otp", emailOtpRoutes);
 
 // --- 404 + error handling (must be last) ---

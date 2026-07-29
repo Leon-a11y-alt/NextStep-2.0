@@ -135,6 +135,15 @@ CREATE TABLE calendar_tasks (
   completed BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+CREATE TABLE focus_sessions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  userId INT NOT NULL,
+  habitId INT NULL,
+  habitName VARCHAR(255) NOT NULL,
+  minutes INT NOT NULL,
+  date DATE NOT NULL
+);
+
 CREATE TABLE admin_requests (
   id           SERIAL PRIMARY KEY,
   "userId"     INT,
@@ -310,7 +319,16 @@ INSERT INTO calendar_tasks (id, "userId", "habitId", "planId", title, date, time
   (22, 1, 2,    NULL, 'Solve one coding problem',         '2026-07-13', '08:00', FALSE),
   (23, 1, NULL, NULL, 'Recap yesterday''s topic',         '2026-07-15', '20:00', FALSE);
 
+<<<<<<< HEAD
+INSERT INTO focus_sessions (id, userId, habitId, habitName, minutes, date) VALUES
+(1,1,2,'Solve one coding problem each weekday',25,'2026-07-06'),
+(2,1,4,'Recap yesterday''s topic for 20 minutes',45,'2026-07-07'),
+(3,1,NULL,'Free focus',30,'2026-07-08');
+
+INSERT INTO admin_requests (id, userId, name, reason, status, reviewedBy, reviewedAt) VALUES
+=======
 INSERT INTO admin_requests (id, "userId", name, reason, status, "reviewedBy", "reviewedAt") VALUES
+>>>>>>> 189b85227e2c974ee0574a4a4bc4b50171a4a331
   (1, 2, 'Priya Nair', 'I help moderate the study-habits category and would like moderator access.', 'pending', NULL, NULL);
 
 INSERT INTO reports (id, "postId", "reportedBy", reason, status) VALUES
