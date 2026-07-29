@@ -1,6 +1,9 @@
 // Tiny fetch wrapper used by every page to talk to the Express backend.
 // Base URL comes from an env var so it is easy to change for deployment.
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+// 4000 must match backend/.env (PORT=4000), backend/server.js and
+// .env.local.example — feature/focus-timer briefly had 5000, which silently
+// broke every API call in the browser ("Failed to fetch").
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 async function request(path, options = {}) {
   const res = await fetch(`${API_URL}${path}`, {
