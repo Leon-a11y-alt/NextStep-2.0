@@ -1,5 +1,17 @@
-// Study plans + lessons data-access layer (PostgreSQL on Supabase).
-// camelCase columns are double-quoted — Postgres lowercases unquoted names.
+// Study Plans — the REPOSITORY. Done by Khaing Khant Zaw.
+//
+// This is the only file that talks to the database for study plans. Keeping
+// all the SQL in one place means the rest of the app never has to know how the
+// data is stored.
+//
+// Two tables work together:
+//   study_plans  — one row per subject   (name, module, message)
+//   lessons      — one row per plan item ("planId" points back at its plan)
+// One plan has many lessons, which is why ticking one item can change the
+// plan's progress without touching any other item.
+//
+// camelCase columns are double-quoted — Postgres lowercases unquoted names,
+// so "planId" without quotes would become planid and the query would fail.
 const { pool } = require("../config/db");
 
 // All of a user's plans, each with its lessons nested (the shape the

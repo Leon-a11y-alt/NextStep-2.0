@@ -1,5 +1,15 @@
-// Study Plans: a plan (module) that contains lessons you tick off.
-// Backed by the study_plans + lessons tables.
+// Study Plans — the CONTROLLER. Done by Khaing Khant Zaw.
+//
+// A "study plan" is one subject (e.g. Operating Systems) that holds a list of
+// plan items you tick off. Progress = ticked items / total items.
+//
+// The controller is the middle layer. Its job is to check what the browser
+// sent BEFORE any of it reaches the database:
+//   • the subject name must not be blank
+//   • blank plan items are thrown away, so an empty box never becomes an item
+// It never writes SQL itself — that is the repository's job (plans.repo.js).
+//
+// Request path:  page -> lib/api.js -> plans.routes.js -> HERE -> plans.repo.js -> Supabase
 const plansRepo = require("../repositories/plans.repo");
 
 // GET /api/plans?userId=1  -> plans with nested lessons
