@@ -14,11 +14,8 @@ async function getUsers(req, res) {
   const users = await usersRepo.listAll();
   const requesterId = req.query?.requesterId;
   res.json(
-    users.map(({ password, createdAt, ...u }) => ({
+    users.map(({ password, ...u }) => ({
       ...u,
-      // the page renders "joined {user.joinedAt}", so keep the alias from main
-      joinedAt: createdAt,
-      isBanned: Boolean(u.isBanned),
       ...(requesterId !== undefined ? { isSelf: Number(u.id) === Number(requesterId) } : {}),
     }))
   );
@@ -155,8 +152,9 @@ async function approveRequest(req, res) {
     reviewedAt: new Date().toISOString().slice(0, 10),
   });
 
-  // Promote the user to admin as well.
-  if (request.userId) await usersRepo.updateRole(request.userId, "admin");
+  // Promote the user to moderator (not admin — admin is no longer
+  // grantable through the request flow, only moderator is). [changed for mod-request rework]
+  if (request.userId) await usersRepo.updateRole(request.userId, "moderator");
 
   res.json(updated);
 }

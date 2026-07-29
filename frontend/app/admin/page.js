@@ -118,12 +118,12 @@ export default function AdminPage() {
     });
   }
 
-  // ---- Admin access requests (Done by Zheng_Xian) ----
+  // ---- Moderator access requests (Done by Zheng_Xian) ---- [changed for mod-request rework]
   function approveRequest(req) {
     withBusy(req.id, async () => {
       await AdminAPI.approveRequest(req.id);
       setRequests((prev) => prev.filter((r) => r.id !== req.id));
-      flash(`${req.name} is now an admin.`);
+      flash(`${req.name} is now a moderator.`);
     });
   }
   function rejectRequest(req) {
@@ -195,7 +195,7 @@ export default function AdminPage() {
     <AppShell
       adminOnly
       title="Admin Moderation"
-      subtitle="Approve student posts, handle reports, manage users, and review admin-access requests."
+      subtitle="Approve student posts, handle reports, manage users, and review moderator-access requests."
     >
       <ApiErrorBanner error={error} onRetry={load} />
       {notice && (
@@ -378,16 +378,6 @@ export default function AdminPage() {
                     {!user.isSelf && canManageUsers(me?.role) && (
                       <Button
                         size="sm"
-                        variant={user.role === "admin" ? "danger" : "success"}
-                        disabled={busyId === user.id}
-                        onClick={() => changeRole(user, user.role === "admin" ? ROLES.USER : ROLES.ADMIN)}
-                      >
-                        <ShieldIcon size={15} /> {user.role === "admin" ? "Remove admin" : "Make admin"}
-                      </Button>
-                    )}
-                    {!user.isSelf && canManageUsers(me?.role) && (
-                      <Button
-                        size="sm"
                         variant={user.isBanned ? "success" : "danger"}
                         disabled={busyId === user.id}
                         onClick={() => toggleBan(user)}
@@ -465,7 +455,7 @@ export default function AdminPage() {
               </div>
 
               <div className="section-title">
-                Admin requests {pendingRequests.length > 0 && <Badge color="violet">{pendingRequests.length}</Badge>}
+                Moderator requests {pendingRequests.length > 0 && <Badge color="teal">{pendingRequests.length}</Badge>}
               </div>
               {pendingRequests.length === 0 && <Card><span className="muted">No pending requests.</span></Card>}
               <div className="grid" style={{ gap: 12 }}>
@@ -478,7 +468,7 @@ export default function AdminPage() {
                     <p className="mb-16" style={{ fontSize: 14 }}>{req.reason}</p>
                     <div className="row gap-8">
                       <Button size="sm" variant="success" disabled={busyId === req.id} onClick={() => approveRequest(req)}>
-                        <CheckIcon size={15} /> Grant admin
+                        <CheckIcon size={15} /> Grant moderator
                       </Button>
                       <Button size="sm" variant="danger" disabled={busyId === req.id} onClick={() => rejectRequest(req)}>
                         <XIcon size={15} /> Reject
