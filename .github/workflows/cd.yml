@@ -1,0 +1,200 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# NextStep — Continuous Delivery / Deployment (CD)
+#
+# WHAT THIS DOES
+#   Runs only when something lands on `main` (i.e. after a PR is merged).
+#
+#     1. ci        — reuses the ENTIRE ci.yml workflow as a gate.
+#                    If one test fails, nothing below runs. Nothing broken
+#                    can ever be published.
+#     2. publish   — builds both Docker images and pushes them to GHCR
+#                    (GitHub Container Registry), tagged with the commit SHA
+#                    and `latest`. This is the "delivery" half: a versioned,
+#                    runnable artifact exists for every commit on main.
+#     3. deploy    — pulls those exact images onto the server and restarts the
+#                    stack. Protected by a GitHub Environment ("production"),
+#                    so it can require a manual approval click.
+#
+#   Delivery vs Deployment: step 2 always runs automatically. Step 3 is the
+#   only manual gate, which is what "continuous delivery" means in practice.
+# ─────────────────────────────────────────────────────────────────────────────
+name: CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cd-main
+  cancel-in-progress: false # never interrupt a deployment half-way
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # 1. THE GATE — run the whole CI pipeline first (reusable workflow)
+  # ───────────────────────────────────────────────────────────────────────────
+  ci:
+    name: CI gate
+    uses: ./.github/workflows/ci.yml
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 2. PUBLISH — push versioned images to GitHub Container Registry
+  # ───────────────────────────────────────────────────────────────────────────
+  publish:
+    name: Publish images to GHCR
+    runs-on: ubuntu-latest
+    needs: ci
+    permissions:
+      contents: read
+      packages: write # required to push to ghcr.io
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # GITHUB_TOKEN is created automatically for every run — no secret to
+      # configure by hand for GHCR.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Repo name lowercased: Docker tags may not contain uppercase letters.
+      - name: Work out the image names
+        id: names
+        run: echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push the backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ghcr.io/${{ steps.names.outputs.repo }}/backend:${{ github.sha }}
+            ghcr.io/${{ steps.names.outputs.repo }}/backend:latest
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build and push the frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          # The API URL is baked in at build time (NEXT_PUBLIC_* is compiled
+          # into the bundle), so the deployed URL comes from a repo variable.
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:4000' }}
+          tags: |
+            ghcr.io/${{ steps.names.outputs.repo }}/frontend:${{ github.sha }}
+            ghcr.io/${{ steps.names.outputs.repo }}/frontend:latest
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Publish summary
+        run: |
+          {
+            echo "### Images published :package:"
+            echo ""
+            echo '```'
+            echo "ghcr.io/${{ steps.names.outputs.repo }}/backend:${GITHUB_SHA::7}"
+            echo "ghcr.io/${{ steps.names.outputs.repo }}/frontend:${GITHUB_SHA::7}"
+            echo '```'
+            echo ""
+            echo "Run this exact build locally:"
+            echo '```bash'
+            echo "IMAGE_TAG=${GITHUB_SHA} docker compose -f docker-compose.prod.yml up -d"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 3. DEPLOY — release the published images to the server
+  #
+  #    This job is a no-op until the deployment secrets exist, so the pipeline
+  #    stays green while the hosting decision is still open. Add the four
+  #    secrets below (Settings → Secrets and variables → Actions) and the same
+  #    job starts deploying for real — no workflow edit needed.
+  #      DEPLOY_HOST  DEPLOY_USER  DEPLOY_SSH_KEY  DEPLOY_PATH
+  # ───────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    needs: publish
+    # A GitHub Environment. Add a "required reviewer" to it and this job waits
+    # for a human to click Approve before anything reaches production.
+    environment: production
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Are the deployment secrets configured?
+        id: check
+        run: |
+          if [ -n "${{ secrets.DEPLOY_HOST }}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Explain the skip
+        if: steps.check.outputs.ready == 'false'
+        run: |
+          {
+            echo "### Deploy skipped :pause_button:"
+            echo ""
+            echo "The images for \`${GITHUB_SHA::7}\` are published and ready, but no"
+            echo "deployment target is configured yet."
+            echo ""
+            echo "To go live, add these repository secrets:"
+            echo "\`DEPLOY_HOST\`, \`DEPLOY_USER\`, \`DEPLOY_SSH_KEY\`, \`DEPLOY_PATH\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "No deployment target configured — skipping (this is not a failure)."
+
+      # Copies docker-compose.prod.yml to the server, then pulls the images
+      # tagged with THIS commit and restarts the stack. Because the tag is the
+      # commit SHA, a rollback is just re-running this job on an older commit.
+      - name: Deploy over SSH
+        if: steps.check.outputs.ready == 'true'
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          REMOTE_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          REPO=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+
+          scp -i ~/.ssh/deploy_key docker-compose.prod.yml \
+            "$USER@$HOST:$REMOTE_PATH/docker-compose.prod.yml"
+
+          ssh -i ~/.ssh/deploy_key "$USER@$HOST" bash -s <<EOF
+            set -euo pipefail
+            cd "$REMOTE_PATH"
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            export IMAGE_REPO="ghcr.io/$REPO"
+            export IMAGE_TAG="${GITHUB_SHA}"
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d
+            docker image prune -f
+          EOF
+
+      - name: Verify the deployment is healthy
+        if: steps.check.outputs.ready == 'true' && vars.PRODUCTION_API_URL != ''
+        run: |
+          for i in $(seq 1 10); do
+            if curl -fsS "${{ vars.PRODUCTION_API_URL }}/api/health"; then
+              echo "Deployment is healthy."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::The deployed API never answered /api/health — investigate or roll back."
+          exit 1

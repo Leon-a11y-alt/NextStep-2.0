@@ -10,10 +10,14 @@ const { Pool, types } = require("pg");
 // objects, so the JSON the API sends stays simple (1082 = the DATE type).
 types.setTypeParser(1082, (value) => value);
 
+// Supabase requires SSL, but a throwaway Postgres (the CI service container or
+// a local Docker one) doesn't speak it at all. Set DATABASE_SSL=disable in
+// those environments; anything else keeps the Supabase-friendly default.
+const useSsl = process.env.DATABASE_SSL !== "disable";
+
 const pgPool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Supabase requires SSL; this keeps it simple for the prototype.
-  ssl: { rejectUnauthorized: false },
+  ssl: useSsl ? { rejectUnauthorized: false } : false,
   // Supabase's pooler hangs up on connections that sit unused. Recycle ours
   // first so we hand back a live connection instead of a dead one.
   idleTimeoutMillis: 10000,

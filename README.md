@@ -1,5 +1,8 @@
 # NextStep
 
+[![CI](https://github.com/Leon-a11y-alt/NextStep-2.0/actions/workflows/ci.yml/badge.svg)](https://github.com/Leon-a11y-alt/NextStep-2.0/actions/workflows/ci.yml)
+[![CD](https://github.com/Leon-a11y-alt/NextStep-2.0/actions/workflows/cd.yml/badge.svg)](https://github.com/Leon-a11y-alt/NextStep-2.0/actions/workflows/cd.yml)
+
 **Turn student advice into real action plans.**
 
 NextStep is a student productivity and peer-support web application built for the
@@ -35,8 +38,13 @@ nextstep/
 ├── package.json            # root scripts (runs both apps together)
 ├── README.md
 ├── .gitignore
-├── docker-compose.yml      # future DevOps: run both containers
-├── .github/workflows/ci.yml# future DevOps: GitHub Actions pipeline
+├── docker-compose.yml      # local: build + run both containers
+├── docker-compose.prod.yml # server: run the published GHCR images
+├── docs/CICD.md            # CI/CD pipeline documentation
+├── .github/
+│   ├── workflows/ci.yml    # CI: quality, tests, build, docker
+│   ├── workflows/cd.yml    # CD: publish to GHCR + deploy
+│   └── dependabot.yml      # automated dependency PRs
 │
 ├── frontend/               # Next.js app
 │   ├── app/                # pages (App Router)
@@ -213,33 +221,36 @@ keep `main` green (tests passing).
 
 ---
 
-## Future DevOps plan (Phase 2)
+## DevOps: containers + CI/CD
 
-The project is already structured so the DevOps phase is mostly wiring, not rewriting.
-
-**1. Docker containerisation** — `Dockerfile`s for both apps and a `docker-compose.yml`
-are included as starters. One command brings the whole stack up:
+**1. Docker containerisation** — both apps have a multi-stage `Dockerfile` (non-root
+user, health check on the API). One command brings the whole stack up locally:
 
 ```bash
 docker compose up --build
 ```
 
-**2. CI/CD** — a starter GitHub Actions workflow lives at `.github/workflows/ci.yml`.
-On every push it installs dependencies and runs `npm test`. This later extends to
-building the Docker images and (optionally) deploying. Jenkins is an alternative if the
-module requires it.
+**2. CI/CD — live.** Two GitHub Actions pipelines:
 
-**3. Automated testing** — `backend/tests/api.test.js` already covers the core logic.
-Next steps: add more controller tests, plus frontend component tests (e.g. React Testing
-Library) so the pipeline can gate merges on passing tests.
+| Pipeline | File | Runs on | Does |
+| --- | --- | --- | --- |
+| **CI** | `.github/workflows/ci.yml` | push to `dev`/`feature/**`, every PR | quality checks → backend tests against a real PostgreSQL service container (+ `/api/health` smoke test) ‖ `next build` → build both Docker images |
+| **CD** | `.github/workflows/cd.yml` | push to `main` | re-runs all of CI as a gate → publishes both images to GHCR tagged `:<commit-sha>` and `:latest` → deploys (approval-gated `production` environment) |
 
-**4. Database** — replace the in-memory arrays in `backend/data/` with a real database
-(MySQL / SQLite / PostgreSQL). Because controllers only talk to those data modules, the
-routes and frontend stay unchanged.
+Full write-up, diagrams and demo script: **[docs/CICD.md](docs/CICD.md)**.
 
-**5. Deployment** — frontend to Vercel (or a container host); backend to Render / Railway
-/ a small VM. Environment variables (`NEXT_PUBLIC_API_URL`, `PORT`) are already
-externalised for this.
+`backend/config/db.js` reads `DATABASE_SSL` so the same code talks to Supabase
+(SSL on, the default) and to a plain Postgres container in CI (`DATABASE_SSL=disable`).
+
+**3. Automated dependency updates** — `.github/dependabot.yml` opens weekly npm PRs;
+CI tests each one before anyone merges it.
+
+**4. Automated testing** — `backend/tests/api.test.js` (17 tests) gates every merge.
+Next: frontend component tests (React Testing Library) + an ESLint stage.
+
+**5. Deployment** — `docker-compose.prod.yml` runs the published GHCR images on a
+server; `IMAGE_TAG=<sha>` makes rollback a one-liner. Set the `DEPLOY_*` secrets to
+activate the deploy job.
 
 ---
 
