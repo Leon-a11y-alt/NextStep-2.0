@@ -32,7 +32,7 @@ function isPostDownvotedByUser(postId, userId) {
 // `forumType` keeps the Study and Habit forums completely separate: the split
 // happens here in SQL, so a habit question can never reach the Study tab even
 // if the frontend asked for it. (Khaing Khant Zaw)
-async function findApproved({ category, search, userId, forumType }) {
+async function findApproved({ category, search, userId, forumType, sortBy = "newest" }) {
   let sql = "SELECT p.*, 0 AS upvotedByUser FROM posts p WHERE p.status = 'approved'";
   const params = [];
 
@@ -49,7 +49,16 @@ async function findApproved({ category, search, userId, forumType }) {
     const q = `%${search.toLowerCase()}%`;
     params.push(q, q);
   }
-  sql += " ORDER BY p.id DESC";
+  
+  // Add sort order based on sortBy parameter
+  if (sortBy === "mostLiked") {
+    sql += " ORDER BY p.upvotes DESC, p.id DESC";
+  } else if (sortBy === "mostDisliked") {
+    sql += " ORDER BY p.downvotes DESC, p.id DESC";
+  } else {
+    // default to newest
+    sql += " ORDER BY p.id DESC";
+  }
 
   const [rows] = await pool.query(sql, params);
   return rows.map((row) => ({
