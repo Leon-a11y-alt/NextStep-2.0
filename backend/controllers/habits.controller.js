@@ -1,4 +1,10 @@
-// Habit / study tracker CRUD. Backed by the MySQL habits table.
+// Habit Tracker — the CONTROLLER. Backed by the `habits` table on Supabase.
+//
+// This is the habit-mode twin of Study Plans: same layered path
+// (page -> lib/api.js -> routes -> controller -> repository -> Supabase),
+// the same create/update/delete actions, and the same idea of progress.
+// A habit can also carry `sourcePostId`, which is set when the habit came from
+// a piece of forum advice ("Add to Habit Tracker").
 const habitsRepo = require("../repositories/habits.repo");
 
 // GET /api/habits?userId=
