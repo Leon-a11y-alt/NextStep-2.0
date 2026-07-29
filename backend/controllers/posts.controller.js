@@ -1,5 +1,6 @@
 // Forum posts CRUD + upvote. Backed by the posts table (Supabase Postgres).
 const postsRepo = require("../repositories/posts.repo");
+const { canModerateContent } = require("../lib/permissions"); // [added for mod role]
 
 // The Study and Habit forums are separate. Anything that isn't one of these
 // two is not a forum we have. (Khaing Khant Zaw)
@@ -74,11 +75,12 @@ async function updatePost(req, res) {
 	const existing = await postsRepo.findById(id);
 	if (!existing) return res.status(404).json({ error: "Post not found." });
 
-	const requesterId = req.body?.userId ?? req.query?.userId;
-	const requesterRole = req.body?.role ?? req.query?.role;
-	if (requesterRole !== "admin" && existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
-		return res.status(403).json({ error: "You can only edit your own posts." });
-	}
+  const requesterId = req.body?.userId ?? req.query?.userId;
+  const requesterRole = req.body?.role ?? req.query?.role;
+  // moderators can edit any post too (charles's moderator role)
+  if (!canModerateContent(requesterRole) && existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
+    return res.status(403).json({ error: "You can only edit your own posts." });
+  }
 
 	// A post never changes forum on edit, so validate the category against the
 	// forum it already belongs to.
@@ -98,14 +100,17 @@ async function deletePost(req, res) {
 	const existing = await postsRepo.findById(id);
 	if (!existing) return res.status(404).json({ error: "Post not found." });
 
-	const requesterId = req.body?.userId ?? req.query?.userId;
-	const requesterRole = req.body?.role ?? req.query?.role;
+  const requesterId = req.body?.userId ?? req.query?.userId;
+  const requesterRole = req.body?.role ?? req.query?.role;
+  // admins AND moderators may delete any post; everyone else only their own
+  if (canModerateContent(requesterRole)) {
+    const removed = await postsRepo.remove(id);
+    return res.json({ message: "Post deleted.", post: removed });
+  }
 
-	if(requesterRole !== "admin"){
-		if (existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
-			return res.status(403).json({ error: "You can only delete your own posts." });
-		}
-	}
+  if (existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
+    return res.status(403).json({ error: "You can only delete your own posts." });
+  }
 
 	const removed = await postsRepo.remove(id);
 	res.json({ message: "Post deleted.", post: removed });

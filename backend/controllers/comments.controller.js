@@ -1,5 +1,6 @@
 // Comments under forum posts. Backed by the MySQL comments table.
 const commentsRepo = require("../repositories/comments.repo");
+const { canModerateContent } = require("../lib/permissions"); // [added for mod role]
 
 // GET /api/comments?postId=&sortBy=
 async function getComments(req, res) {
@@ -34,7 +35,7 @@ async function updateComment(req, res) {
 
   const requesterId = req.body?.userId ?? req.query?.userId;
   const requesterRole = req.body?.role ?? req.query?.role;
-  if (requesterRole !== "admin" && existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
+  if (!canModerateContent(requesterRole) && existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
     return res.status(403).json({ error: "You can only edit your own comments." });
   }
 
@@ -51,11 +52,9 @@ async function deleteComment(req, res) {
 
   const requesterId = req.body?.userId ?? req.query?.userId;
   const requesterRole = req.body?.role ?? req.query?.role;
-  
-  if (requesterRole !== "admin") {
-    if (existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
-      return res.status(403).json({ error: "You can only delete your own comments." });
-    }
+  // moderators can also remove other people's replies (charles's moderator role)
+  if (!canModerateContent(requesterRole) && existing.userId && requesterId !== undefined && Number(requesterId) !== Number(existing.userId)) {
+    return res.status(403).json({ error: "You can only delete your own comments." });
   }
 
   const removed = await commentsRepo.remove(id);

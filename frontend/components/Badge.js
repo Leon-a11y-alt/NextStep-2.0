@@ -9,6 +9,7 @@ export default function Badge({ color = "gray", dot = false, children }) {
     amber: "badge badge-amber",
     red: "badge badge-red",
     violet: "badge badge-violet",
+    teal: "badge badge-teal", // [added for mod role]
   };
   return (
     <span className={map[color] || map.gray}>

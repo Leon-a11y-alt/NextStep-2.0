@@ -43,6 +43,11 @@ async function login(req, res) {
   if (!user || user.password !== password) {
     return res.status(401).json({ error: "Invalid email or password." });
   }
+  // [added for mod role follow-up] Banning only matters if it actually
+  // blocks sign-in — otherwise it's just a label in the admin panel.
+  if (user.isBanned) {
+    return res.status(403).json({ error: "This account has been banned." });
+  }
 
   const token = "demo-token-" + user.id;
   res.json({ token, user: safeUser(user) });

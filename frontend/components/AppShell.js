@@ -8,6 +8,7 @@ import { useMode } from "@/lib/mode";
 import Navbar from "./Navbar";
 import Sidebar from "./Sidebar";
 import { BookIcon, TargetIcon } from "@/lib/icons";
+import { canViewAdminPanel } from "@/lib/permissions"; // [added for mod role]
 
 // Pages that only exist in one mode: switching away from their mode sends
 // the user back to the dashboard instead of leaving them on a hidden page.
@@ -45,11 +46,11 @@ export default function AppShell({ title, subtitle, actions, children, adminOnly
   useEffect(() => {
     if (!ready) return;
     if (!user) router.replace("/login");
-    else if (adminOnly && user.role !== "admin") router.replace("/dashboard");
+    else if (adminOnly && !canViewAdminPanel(user.role)) router.replace("/dashboard");
   }, [ready, user, adminOnly, router]);
 
   // While auth is resolving (or redirecting), show a light placeholder.
-  if (!ready || !user || (adminOnly && user.role !== "admin")) {
+  if (!ready || !user || (adminOnly && !canViewAdminPanel(user.role))) {
     return (
       <div className="app-shell">
         <Navbar />

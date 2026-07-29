@@ -151,12 +151,10 @@ export const SortingAPI = {
 };
 
 export const AdminAPI = {
-  // `me` is the logged-in admin's id, so the API can flag their own row (isSelf)
-  // and refuse self-ban / self-delete / self-demote on the server.
-  users: (me) => api.get(`/api/admin/users${me ? `?me=${me}` : ""}`),
-  setRole: (id, role, me) => api.patch(`/api/admin/users/${id}/role`, { role, me }),
-  toggleBan: (id, me) => api.post(`/api/admin/users/${id}/ban`, { me }),
-  deleteUser: (id, me) => api.del(`/api/admin/users/${id}`, { me }),
+  // [added for mod role] requesterId lets the backend mark the caller's own
+  // row with isSelf: true, so the UI can hide "manage yourself" buttons.
+  users: (requesterId) =>
+    api.get(`/api/admin/users${requesterId !== undefined ? `?requesterId=${requesterId}` : ""}`),
   pendingPosts: () => api.get("/api/admin/pending-posts"),
   approvePost: (id) => api.put(`/api/admin/posts/${id}/approve`),
   rejectPost: (id) => api.put(`/api/admin/posts/${id}/reject`),
@@ -166,4 +164,12 @@ export const AdminAPI = {
   approveRequest: (id) => api.put(`/api/admin/requests/${id}/approve`),
   rejectRequest: (id) => api.put(`/api/admin/requests/${id}/reject`),
   stats: () => api.get("/api/admin/stats"),
+  // [added for mod role] role: "user" | "moderator" | "admin"
+  setRole: (id, role, requesterId, requesterRole) =>
+    api.patch(`/api/admin/users/${id}/role`, { role, requesterId, requesterRole }),
+  // [added for mod role follow-up]
+  toggleBan: (id, requesterId, requesterRole) =>
+    api.post(`/api/admin/users/${id}/ban`, { requesterId, requesterRole }),
+  deleteUser: (id, requesterId, requesterRole) =>
+    api.del(`/api/admin/users/${id}`, { requesterId, requesterRole }),
 };
