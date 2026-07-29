@@ -129,13 +129,9 @@ export const QuizAPI = {
   topics: (userId) => api.get(`/api/quiz?userId=${userId}`),
 };
 
-// Speed Sorting Challenge: sets of terms to sort into category bins. Built-in
-// sets match the student's study plans; uploaded sets are parsed from a revision
-// file. Returns { fromPlans, sets: [{ id, title, emoji, source, categories, items }] }.
+// SpeedPlay: upload your notes text and get back an AI-generated quiz.
 export const SortingAPI = {
-  list: (userId) => api.get(`/api/sorting?userId=${userId}`),
-  upload: (payload) => api.post("/api/sorting/upload", payload), // { userId, filename, content }
-  remove: (id, userId) => api.del(`/api/sorting/${id}`, { userId }),
+  upload: (payload) => api.post("/api/sorting/upload", payload), // { filename, content } -> { title, questions }
 };
 
 export const AdminAPI = {

@@ -1,117 +1,107 @@
-// Speed Sorting Challenge — assembles playable sets and turns an uploaded
-// revision file into a new set. Deliberately NOT AI: the file is parsed
-// deterministically into terms + categories, so the unique value is the timed
-// drag-sort game, not generated content.
+// SpeedPlay — backend logic.
 //
-//   GET  /api/sorting?userId=1        -> sets available to the student
-//   POST /api/sorting/upload          -> { userId, filename, content } parsed into a set
-//   DELETE /api/sorting/:id           -> remove one of the student's upload sets
-const repo = require("../repositories/sorting.repo");
+// One job: take the notes the student uploaded and ask Google Gemini to write
+// multiple-choice revision questions from them. No database.
+//
+//   POST /api/sorting/upload   body: { content, filename }
+//   returns: { title, questions: [{ question, options:[...], answer }] }
+//
+// The API key comes from GEMINI_API_KEY in backend/.env.
 
-const EMOJI = {
-  programming: "💻", networking: "🌐", databases: "🗄️",
-  "operating systems": "🖥️", biology: "🧬", chemistry: "⚗️",
-};
-const emojiFor = (set) => {
-  if (set.source === "upload") return "📄";
-  const key = (set.subject || set.title || "").toLowerCase();
-  for (const k of Object.keys(EMOJI)) if (key.includes(k)) return EMOJI[k];
-  return "🗂️";
-};
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
 
-// Attach items (grouped) + the ordered list of categories to each set.
-function shapeSets(sets, itemRows) {
-  const bySet = {};
-  for (const r of itemRows) (bySet[r.setId] ||= []).push({ term: r.term, category: r.category });
-  return sets
-    .map((s) => {
-      const items = bySet[s.id] || [];
-      const categories = [...new Set(items.map((i) => i.category))];
-      return {
-        id: s.id,
-        title: s.title,
-        subject: s.subject,
-        source: s.source,
-        emoji: emojiFor(s),
-        categories,
-        items,
-      };
-    })
-    // Only sets that are actually playable (>=2 categories, >=4 items).
-    .filter((s) => s.categories.length >= 2 && s.items.length >= 4);
+// The instruction we send to the AI.
+function buildPrompt(notes) {
+  return (
+    "Create 8 multiple-choice revision questions from the STUDY NOTES.\n" +
+    'Each question must have 4 different, realistic plain-text options (no "a." prefixes),\n' +
+    'and "answer" must be the exact full text of the correct option.\n' +
+    'Reply ONLY with JSON: {"questions":[{"question":"...","options":["...","...","...","..."],"answer":"..."}]}\n\n' +
+    "STUDY NOTES:\n" + notes
+  );
 }
 
-async function getSorting(req, res) {
-  const { userId } = req.query;
-  if (!userId) return res.status(400).json({ error: "userId is required." });
+// ---- Ask Google Gemini for the questions ---------------------------------
+async function askGemini(notes) {
+  // The key goes in a header (not the URL) — this is what Google recommends and
+  // it keeps the secret out of URLs/logs.
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY },
+    signal: AbortSignal.timeout(20000), // give up after 20s
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: buildPrompt(notes) }] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.4 },
+    }),
+  });
 
-  const subjects = await repo.planSubjects(userId);
-  const [builtin, uploads] = await Promise.all([repo.builtinSets(subjects), repo.uploadSets(userId)]);
-  const fromPlans = builtin.some((s) => s.subject); // at least one plan-matched set
-  const all = [...uploads, ...builtin]; // show the student's own sets first
-  const items = await repo.itemsForSets(all.map((s) => s.id));
-
-  res.json({ fromPlans, sets: shapeSets(all, items) });
-}
-
-// Parse a plain-text/CSV revision file into { term, category } pairs.
-// Supported formats (auto-detected):
-//   "Category: term1, term2, term3"   (one category per line)
-//   "term, category"                  (CSV pairs, one per line)
-function parseRevisionFile(content) {
-  const lines = String(content || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const items = [];
-  const useColon = lines.some((l) => l.includes(":"));
-
-  for (const line of lines) {
-    if (useColon) {
-      const idx = line.indexOf(":");
-      if (idx === -1) continue;
-      const category = line.slice(0, idx).trim();
-      const terms = line.slice(idx + 1).split(",").map((t) => t.trim()).filter(Boolean);
-      for (const term of terms) {
-        if (category && term) items.push({ term: term.slice(0, 160), category: category.slice(0, 120) });
-      }
-    } else {
-      const parts = line.split(",").map((p) => p.trim());
-      if (parts.length >= 2 && parts[0] && parts[1]) {
-        items.push({ term: parts[0].slice(0, 160), category: parts[1].slice(0, 120) });
-      }
-    }
-    if (items.length >= 80) break; // sane cap
-  }
-  return items;
-}
-
-async function uploadSet(req, res) {
-  const { userId, filename, content } = req.body;
-  if (!userId) return res.status(400).json({ error: "userId is required." });
-  if (!content || !content.trim()) return res.status(400).json({ error: "The file appears to be empty." });
-
-  const items = parseRevisionFile(content);
-  const categories = new Set(items.map((i) => i.category));
-  if (items.length < 4 || categories.size < 2) {
-    return res.status(422).json({
-      error:
-        "Couldn't build a sorting set from this file. Use lines like \"Category: item1, item2, item3\" " +
-        "(at least 2 categories and 4 items).",
-    });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Gemini HTTP ${res.status} ${detail.slice(0, 200)}`);
   }
 
-  const base = (filename || "My revision set").replace(/\.[^.]+$/, "").trim() || "My revision set";
-  const created = await repo.createUploadSet({ userId, title: base.slice(0, 160), filename, items });
-
-  const rows = await repo.itemsForSets([created.id]);
-  res.status(201).json(shapeSets([created], rows)[0]);
+  // Gemini's reply is nested — dig out the JSON text it generated.
+  const data = await res.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return []; }
+  return (Array.isArray(parsed.questions) ? parsed.questions : []).map(cleanQuestion).filter(Boolean);
 }
 
-async function deleteSet(req, res) {
-  const id = Number(req.params.id);
-  const set = await repo.findSet(id);
-  if (!set) return res.status(404).json({ error: "Set not found." });
-  if (set.source !== "upload") return res.status(403).json({ error: "Built-in sets can't be deleted." });
-  await repo.removeSet(id);
-  res.json({ message: "Set deleted.", id });
+// A junk option is empty, a single letter, or a leftover placeholder like "o1".
+const isJunk = (o) => !o || o.length < 2 || /^[a-d]$/i.test(o) || /^(o|opt|option|choice|answer)\s*\d+$/i.test(o);
+
+// Tidy one AI question. Returns a clean question, or null if it can't be used.
+function cleanQuestion(q) {
+  if (!q || typeof q.question !== "string") return null;
+
+  // Clean options: strip "a." prefixes, trim, drop junk, remove duplicates.
+  const options = [];
+  for (const raw of Array.isArray(q.options) ? q.options : []) {
+    const opt = String(raw).replace(/^[a-dA-D][.)]\s*/, "").trim();
+    if (!isJunk(opt) && !options.some((o) => o.toLowerCase() === opt.toLowerCase())) options.push(opt);
+  }
+  if (options.length < 3) return null; // need a real choice
+
+  // Find the correct answer and make sure it matches one of the options.
+  let answer = String(q.answer ?? "").replace(/^[a-dA-D][.)]\s*/, "").trim();
+  const letter = String(q.answer ?? "").trim().toLowerCase();
+  if (["a", "b", "c", "d"].includes(letter)) answer = options[["a", "b", "c", "d"].indexOf(letter)] || "";
+
+  let match = options.find((o) => o.toLowerCase() === answer.toLowerCase());
+  if (!match) match = options.find((o) => o.toLowerCase().includes(answer.toLowerCase()) || answer.toLowerCase().includes(o.toLowerCase()));
+  if (!match) return null;
+
+  return { question: q.question.trim(), options: options.slice(0, 4), answer: match };
 }
 
-module.exports = { getSorting, uploadSet, deleteSet };
+// POST /api/sorting/upload — build the quiz from the uploaded notes.
+async function uploadNotes(req, res) {
+  const { content, filename } = req.body;
+  if (!content || !content.trim()) {
+    return res.status(400).json({ error: "The file is empty." });
+  }
+  if (!GEMINI_API_KEY) {
+    return res.status(500).json({ error: "No Gemini API key. Add GEMINI_API_KEY to backend/.env." });
+  }
+
+  // Only send the first part of very long notes so the request stays fast.
+  let questions;
+  try {
+    questions = await askGemini(content.slice(0, 8000));
+  } catch (err) {
+    console.error("Gemini failed:", err.message);
+    return res.status(502).json({ error: "Could not reach the AI. Please try again." });
+  }
+
+  if (questions.length === 0) {
+    return res.status(422).json({ error: "The AI couldn't make questions from these notes. Try adding more detail." });
+  }
+
+  const title = (filename || "My notes").replace(/\.[^.]+$/, "").trim() || "My notes";
+  res.status(201).json({ title, questions });
+}
+
+module.exports = { uploadNotes };
