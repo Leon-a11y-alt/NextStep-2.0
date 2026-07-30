@@ -21,10 +21,7 @@ name: CI
 
 on:
   push:
-    # `main` is deliberately absent: pushes to main are handled by cd.yml,
-    # which runs this exact workflow first and then deploys. That avoids
-    # running the same tests twice for one commit.
-    branches: [dev, "feature/**"]
+    branches: [main, dev, "feature/**"]
   pull_request:
     branches: [main, dev]
   # Lets us press "Run workflow" by hand in the Actions tab (useful for a demo).
