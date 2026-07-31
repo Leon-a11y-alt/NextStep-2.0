@@ -16,7 +16,7 @@ import Button from "@/components/Button";
 import ApiErrorBanner from "@/components/ApiErrorBanner";
 import { useAuth } from "@/lib/auth";
 import { HelpAPI, PlansAPI } from "@/lib/api";
-import { SearchIcon, SparkIcon, ExternalIcon, PlusIcon, BookIcon, ClockIcon } from "@/lib/icons";
+import { SearchIcon, SparkIcon, ExternalIcon, PlusIcon, BookIcon, ClockIcon, CheckIcon, ChevronDownIcon } from "@/lib/icons";
 
 // Demo response mirroring what the backend returns (used only if the API is
 // down). More than one card, because a real answer returns several.
@@ -58,6 +58,15 @@ export default function HelpPage() {
   const [demoMode, setDemoMode] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // The AI's visible thinking process: one entry per step the backend streams
+  // while it works (cache check -> AI -> keyword fallback). Every line is a
+  // real decision the server just made — nothing here is staged.
+  const [thinking, setThinking] = useState([]);
+  // After the answer arrives the trace folds away behind a dropdown; this is
+  // whether the user has opened it.
+  const [traceOpen, setTraceOpen] = useState(false);
+  // Which course cards have their "Why this course" breakdown open, by id.
+  const [whyOpen, setWhyOpen] = useState({});
 
   function flash(msg) { setNotice(msg); setTimeout(() => setNotice(""), 3000); }
 
@@ -67,15 +76,29 @@ export default function HelpPage() {
     setLoading(true);
     setError("");
     setResults(null);
+    setThinking([]);
+    setTraceOpen(false); // a new question starts with the trace folded away
+    setWhyOpen({});      // and every card's breakdown closed
     try {
-      const data = await HelpAPI.recommend(query);
+      // Streaming version: each step appears on screen the moment the backend
+      // takes it, so you can watch the pipeline think in real time.
+      const data = await HelpAPI.recommendStream(query, (step) =>
+        setThinking((prev) => [...prev, step])
+      );
       setResults(data);
       setDemoMode(false);
     } catch {
-      // Backend unreachable — show demo data so the page still works.
-      await new Promise((r) => setTimeout(r, 900));
-      setResults(DEMO_RESULTS.default);
-      setDemoMode(true);
+      // Streaming failed (older backend or network hiccup) — try the plain
+      // one-shot endpoint before giving up and showing demo data.
+      try {
+        const data = await HelpAPI.recommend(query);
+        setResults(data);
+        setDemoMode(false);
+      } catch {
+        await new Promise((r) => setTimeout(r, 900));
+        setResults(DEMO_RESULTS.default);
+        setDemoMode(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -129,11 +152,85 @@ export default function HelpPage() {
         </p>
       </Card>
 
-      {/* Loading state */}
+      {/* WHILE searching: one line that swaps to whichever step the backend is
+          on right now — progress after progress, never a growing list. */}
       {loading && (
-        <Card className="center" style={{ padding: 40 }}>
-          <div className="stat-icon mb-16" style={{ background: "var(--violet-050)", color: "var(--violet)", margin: "0 auto 12px" }}><SparkIcon size={22} /></div>
-          <p className="muted">Checking the NetAcad catalogue for &ldquo;{query}&rdquo;…</p>
+        <Card className="mb-24">
+          <div className="row gap-12" style={{ alignItems: "center", flexWrap: "nowrap" }} aria-live="polite">
+            <span
+              style={{
+                width: 20, height: 20, borderRadius: 999, flexShrink: 0,
+                display: "grid", placeItems: "center",
+                background: "var(--violet-050)", color: "var(--violet)",
+                animation: "pulse 1.2s ease-in-out infinite",
+              }}
+            >
+              <SparkIcon size={12} />
+            </span>
+            <span className="small" style={{ fontWeight: 700, whiteSpace: "nowrap", flexShrink: 0 }}>
+              {thinking.length ? thinking[thinking.length - 1].label : "Connecting…"}
+            </span>
+            {thinking.length > 0 && thinking[thinking.length - 1].detail && (
+              <span className="small muted" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+                {thinking[thinking.length - 1].detail}
+              </span>
+            )}
+            {thinking.length > 0 && (
+              <span className="small muted" style={{ marginLeft: "auto", flexShrink: 0 }}>
+                {(thinking[thinking.length - 1].t / 1000).toFixed(1)}s
+              </span>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {/* AFTER the answer: the full trace folds away behind this dropdown.
+          Every row inside is a real step the backend streamed while working —
+          cache check, the Gemini call with its true timing, or the keyword
+          fallback if the AI couldn't answer. */}
+      {!loading && thinking.length > 0 && (
+        <Card className="mb-24">
+          <button
+            type="button"
+            onClick={() => setTraceOpen((o) => !o)}
+            aria-expanded={traceOpen}
+            className="row gap-8"
+            style={{ width: "100%", background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0, alignItems: "center" }}
+          >
+            <div className="stat-icon" style={{ background: "var(--violet-050)", color: "var(--violet)", width: 30, height: 30, flexShrink: 0 }}>
+              <SparkIcon size={15} />
+            </div>
+            <span className="small" style={{ fontWeight: 700 }}>How the AI reached this conclusion</span>
+            <span className="small muted">
+              {thinking.length} steps &middot; {(thinking[thinking.length - 1].t / 1000).toFixed(1)}s
+            </span>
+            <span style={{ marginLeft: "auto", color: "var(--muted)", transform: traceOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }}>
+              <ChevronDownIcon size={16} />
+            </span>
+          </button>
+
+          {traceOpen && (
+            <div className="stack gap-8 mt-16">
+              {thinking.map((s, i) => (
+                <div key={i} className="row gap-12" style={{ alignItems: "flex-start" }}>
+                  <span
+                    style={{
+                      width: 20, height: 20, borderRadius: 999, flexShrink: 0, marginTop: 1,
+                      display: "grid", placeItems: "center",
+                      background: "var(--green-050)", color: "var(--green)",
+                    }}
+                  >
+                    <CheckIcon size={12} />
+                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <span className="small" style={{ fontWeight: 700 }}>{s.label}</span>
+                    <span className="small muted" style={{ marginLeft: 8 }}>{(s.t / 1000).toFixed(1)}s</span>
+                    {s.detail && <div className="small muted">{s.detail}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
       )}
 
@@ -177,7 +274,46 @@ export default function HelpPage() {
                   <div className="nc-meta"><BookIcon size={14} /> Course&nbsp; | &nbsp;{rec.format || "Self-paced"}</div>
                   <div className="nc-title">{rec.module}</div>
                   <p className="nc-desc">{rec.description}</p>
-                  <div className="nc-why"><strong>Why this course:</strong> {rec.reason}</div>
+                  {/* "Why this course" — the engine's one-line reason, and a
+                      dropdown with the exact match breakdown: which of your
+                      words hit, where they hit, and what the course covers. */}
+                  <button
+                    type="button"
+                    className="nc-why"
+                    onClick={() => setWhyOpen((p) => ({ ...p, [rec.id]: !p[rec.id] }))}
+                    aria-expanded={!!whyOpen[rec.id]}
+                    style={{ width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", gap: 8, alignItems: "flex-start" }}
+                  >
+                    <span style={{ minWidth: 0 }}><strong>Why this course:</strong> {rec.reason}</span>
+                    <span style={{ marginLeft: "auto", flexShrink: 0, transform: whyOpen[rec.id] ? "rotate(180deg)" : "none", transition: "transform .15s" }}>
+                      <ChevronDownIcon size={14} />
+                    </span>
+                  </button>
+                  {whyOpen[rec.id] && (
+                    <div className="nc-why" style={{ marginTop: 6 }}>
+                      {rec.explain ? (
+                        <>
+                          {/* your words, tagged with where each one hit */}
+                          {rec.explain.terms.length > 0 && (
+                            <div className="row gap-8 mb-16" style={{ flexWrap: "wrap" }}>
+                              {rec.explain.terms.map((t, i) => (
+                                <span key={i} className="badge badge-blue" title={`+${t.points} point${t.points > 1 ? "s" : ""}`}>
+                                  {t.word} &middot; {t.where}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {rec.explain.lines.map((line, i) => (
+                            <div key={i} className="small" style={{ marginTop: i ? 6 : 0 }}>{line}</div>
+                          ))}
+                        </>
+                      ) : (
+                        <span className="small muted">
+                          This answer was saved before breakdowns existed — ask the question again to rebuild it.
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   <div className="nc-foot">
                     <span className="row gap-8"><ClockIcon size={14} /> {rec.hours ? `${rec.hours} Hours` : "Self-paced"}</span>

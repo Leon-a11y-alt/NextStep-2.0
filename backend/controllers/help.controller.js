@@ -111,11 +111,46 @@ function scoreCourse(course, words) {
   const { strong, weak } = courseIndex(course);
   let score = 0;
   const matched = [];
+  const evidence = []; // exactly where each of the student's words hit
   for (const word of words) {
-    if (hits(strong, word)) { score += 3; matched.push(word); }
-    else if (hits(weak, word)) { score += 1; matched.push(word); }
+    if (hits(strong, word)) { score += 3; matched.push(word); evidence.push({ word, where: "title/keywords", points: 3 }); }
+    else if (hits(weak, word)) { score += 1; matched.push(word); evidence.push({ word, where: "description", points: 1 }); }
   }
-  return { course, score, matched };
+  return { course, score, matched, evidence };
+}
+
+// The per-course breakdown behind each card's "Why this course" dropdown.
+// Nothing here is generated text-from-thin-air: every line is computed from
+// the real match — which words hit, where, and what the course actually is.
+function explainMatch(course, query) {
+  const words = toKeywords(query);
+  const { score, evidence } = scoreCourse(course, words);
+  const strongHits = evidence.filter((e) => e.where === "title/keywords").map((e) => e.word);
+  const weakHits = evidence.filter((e) => e.where === "description").map((e) => e.word);
+
+  const lines = [];
+  if (strongHits.length) {
+    lines.push(`"${strongHits.join('", "')}" ${strongHits.length === 1 ? "appears" : "appear"} in this course's title or keyword list — the strongest signal (3 points each).`);
+  }
+  if (weakHits.length) {
+    lines.push(`"${weakHits.join('", "')}" ${weakHits.length === 1 ? "appears" : "appear"} in the course description (1 point each).`);
+  }
+  if (!evidence.length) {
+    lines.push("None of your words match this course directly — it is suggested as a beginner-friendly place to start instead.");
+  }
+  const topics = String(course.topics || "").split(",").map((t) => t.trim()).filter(Boolean).slice(0, 5);
+  lines.push(`The course itself: ${course.level || "Beginner"} level, ${course.hours ? `about ${course.hours} hours` : "self-paced"}, covering ${topics.join(", ")}.`);
+
+  return { terms: evidence, score, lines };
+}
+
+// Attach an `explain` breakdown to every result card, whichever engine made it.
+function withExplanations(results, courses, query) {
+  const byId = new Map(courses.map((c) => [Number(c.id), c]));
+  return results.map((r) => {
+    const course = byId.get(Number(r.id));
+    return course ? { ...r, explain: explainMatch(course, query) } : r;
+  });
 }
 
 // The one place a course row becomes the JSON the Study Help page renders.
@@ -239,7 +274,12 @@ function mergePicks(picks, courses) {
 
 // Ask the n8n workflow to rank the catalogue. Returns null on any problem
 // (not configured, timeout, HTTP error, unparseable answer, no usable ids).
-async function askAi(query, courses) {
+//
+// `notify` is optional: the live "thinking process" stream passes a callback
+// here so the student can SEE why the AI step failed, instead of that reason
+// only appearing in the server console.
+async function askAi(query, courses, notify) {
+  const tell = (msg) => { console.log("  " + msg); if (notify) notify(msg); };
   const url = process.env.N8N_WEBHOOK_URL;
   if (!url) return null;
 
@@ -265,7 +305,7 @@ async function askAi(query, courses) {
       signal: abort.signal,
     });
     if (!response.ok) {
-      console.log(`  n8n replied ${response.status}; using keyword matching.`);
+      tell(`n8n replied ${response.status}; using keyword matching.`);
       return null;
     }
 
@@ -279,27 +319,45 @@ async function askAi(query, courses) {
       // Show what actually came back — usually an n8n error object, which is
       // far more useful than "unexpected answer".
       const snippet = body.replace(/\s+/g, " ").slice(0, 160);
-      console.log("  n8n answer wasn't the expected [{id,match,reason}]; using keyword matching.");
-      console.log(`    it replied: ${snippet}`);
+      tell("the AI answer wasn't the expected [{id,match,reason}] shape" + (snippet ? ` — it replied: ${snippet}` : " — the reply was empty"));
       return null;
     }
 
     const results = mergePicks(picks, courses);
     if (!results.length) {
-      console.log("  n8n picked no course we actually have; using keyword matching.");
+      tell("the AI picked no course we actually have (all ids were unknown)");
       return null;
     }
     return results;
   } catch (err) {
     const why = err.name === "AbortError" ? `no reply in ${AI_TIMEOUT_MS}ms` : err.message;
-    console.log(`  n8n unavailable (${why}); using keyword matching.`);
+    tell(`n8n unavailable (${why}); using keyword matching.`);
     return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
+// The keyword engine as one function: score every course, best first.
+// If nothing matched at all, still suggest two beginner-friendly courses so
+// the student never gets an empty answer. Used by BOTH endpoints below.
+function keywordResults(query, courses) {
+  const words = toKeywords(query);
+  const scored = courses.map((course) => scoreCourse(course, words)).sort((a, b) => b.score - a.score);
+
+  let top = scored.filter((s) => s.score > 0).slice(0, MAX_RESULTS);
+  const nothingMatched = top.length === 0;
+  if (nothingMatched) {
+    top = scored.filter((s) => String(s.course.level).toLowerCase() === "beginner").slice(0, 2);
+    if (!top.length) top = scored.slice(0, 2);
+  }
+
+  const bestScore = nothingMatched ? 1 : top[0].score;
+  return withExplanations(tagWeak(top.map((s) => toResult(s, bestScore, nothingMatched))), courses, query);
+}
+
 // POST /api/help/recommend   body: { query }
+// The plain one-shot answer (used by tests and as the page's fallback).
 async function recommend(req, res) {
   const query = (req.body.query || "").trim();
   if (!query) {
@@ -319,29 +377,95 @@ async function recommend(req, res) {
   //    keyword matching, so the page always answers.
   const aiResults = await askAi(query, courses);
   if (aiResults) {
-    const tagged = tagWeak(aiResults);
+    const tagged = withExplanations(tagWeak(aiResults), courses, query);
     await helpRepo.saveCache(query, tagged);
     return res.json(tagged);
   }
 
-  // 3) Keyword matching: score every course, best first.
-  const words = toKeywords(query);
-  const scored = courses.map((course) => scoreCourse(course, words)).sort((a, b) => b.score - a.score);
-
-  // Take the best few; if nothing matched at all, still suggest two
-  // beginner-friendly courses so the student never gets an empty answer.
-  let top = scored.filter((s) => s.score > 0).slice(0, MAX_RESULTS);
-  const nothingMatched = top.length === 0;
-  if (nothingMatched) {
-    top = scored.filter((s) => String(s.course.level).toLowerCase() === "beginner").slice(0, 2);
-    if (!top.length) top = scored.slice(0, 2);
-  }
-
-  const bestScore = nothingMatched ? 1 : top[0].score;
-  const results = tagWeak(top.map((s) => toResult(s, bestScore, nothingMatched)));
-
+  // 3) Keyword matching.
+  const results = keywordResults(query, courses);
   await helpRepo.saveCache(query, results);
   res.json(results);
 }
 
-module.exports = { recommend, toKeywords, scoreCourse, parseAiPicks, mergePicks, tagWeak };
+// POST /api/help/recommend-stream   body: { query }
+//
+// Same brain as recommend(), but it NARRATES: each real decision is written to
+// the response the moment it happens, as one JSON object per line (NDJSON).
+// The page shows these lines live, so the student watches the actual
+// cache -> AI -> keyword pipeline think — nothing here is staged.
+//
+//   { type: "step", label, detail, t }   t = ms since the request started
+//   { type: "result", results: [...] }   the same array recommend() returns
+async function recommendStream(req, res) {
+  const query = (req.body.query || "").trim();
+  if (!query) {
+    return res.status(400).json({ error: "Please tell us what you need help with." });
+  }
+
+  // Headers first — after this we're streaming, not sending one JSON body.
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache");
+  res.flushHeaders();
+
+  const t0 = Date.now();
+  const send = (obj) => res.write(JSON.stringify(obj) + "\n");
+  const step = (label, detail) => send({ type: "step", label, detail: detail || null, t: Date.now() - t0 });
+
+  try {
+    const words = toKeywords(query);
+    step("Reading your question", words.length ? `Key terms found: ${words.join(", ")}` : "No usable key terms — this may be outside the catalogue");
+
+    // 1) Cache
+    step("Checking past answers", "Looking for this exact question in the recommendations table");
+    const cached = await helpRepo.findCached(query);
+    if (cached) {
+      step("Found a saved answer", `Answered before — served from the cache in ${Date.now() - t0}ms, no AI call needed`);
+      send({ type: "result", results: JSON.parse(cached.results) });
+      return res.end();
+    }
+    step("New question", "Nothing cached — working it out from scratch");
+
+    const courses = await helpRepo.listCourses();
+
+    // 2) AI
+    let results = null;
+    if (process.env.N8N_WEBHOOK_URL) {
+      step("Asking the AI", `Sending your question + our ${courses.length}-course NetAcad catalogue to Gemini (via n8n). It returns only course ids — every fact on a card comes from our own database`);
+      const tAi = Date.now();
+      results = await askAi(query, courses, (why) => step("AI problem", why));
+      if (results) {
+        // Same finishing touches the plain endpoint applies: weak-answer flag
+        // + the per-course "why exactly" breakdown for each card's dropdown.
+        results = withExplanations(tagWeak(results), courses, query);
+        step("AI answered", `Gemini ranked ${results.length} course(s) in ${((Date.now() - tAi) / 1000).toFixed(1)}s — its ids matched real rows in our catalogue`);
+      } else {
+        step("Switching engines", "No usable AI answer — falling back to keyword matching so you still get a result");
+      }
+    } else {
+      step("AI not configured", "N8N_WEBHOOK_URL is empty — using keyword matching");
+    }
+
+    // 3) Keywords
+    if (!results) {
+      step("Scoring the catalogue", `Comparing your key terms against all ${courses.length} courses — a hit in the title/keywords scores 3, in the description 1`);
+      results = keywordResults(query, courses);
+      step("Ranked", `Best match: ${results[0].module} at ${results[0].match}%`);
+    }
+
+    if (results[0] && results[0].weak) {
+      step("Being honest", "The best match is weak — telling you nothing really covers this instead of bluffing");
+    }
+
+    await helpRepo.saveCache(query, results);
+    step("Saving the answer", "Cached — asking this exact question again will take ~30ms");
+    send({ type: "result", results });
+  } catch (err) {
+    // Headers are already sent, so report the failure inside the stream.
+    step("Something went wrong", err.message);
+    send({ type: "error", error: err.message });
+  }
+  res.end();
+}
+
+module.exports = { recommend, recommendStream, toKeywords, scoreCourse, parseAiPicks, mergePicks, tagWeak };

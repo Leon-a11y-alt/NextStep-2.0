@@ -1001,3 +1001,10 @@ html[data-mode="habit"] body {
   .pg-sort-current, .pg-sort-bin.correct, .pg-sort-bin.wrong { animation: none !important; }
   .pg-ring-fill { stroke-dashoffset: var(--ring-off); }
 }
+
+/* Study Help "AI thinking process" — the current step's marker pulses while
+   the backend is still on it. (Khaing Khant Zaw) */
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.25); opacity: 0.6; }
+}
