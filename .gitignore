@@ -21,3 +21,9 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Ansible local connection details and secrets
+ansible/inventory.ini
+ansible/*.pem
+ansible/*.key
+ansible/vault-password.txt

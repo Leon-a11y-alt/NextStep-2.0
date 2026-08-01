@@ -1,0 +1,11 @@
+---
+deployment_user: ubuntu
+deployment_path: /opt/nextstep
+
+required_packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - git
+
+docker_service_name: docker
