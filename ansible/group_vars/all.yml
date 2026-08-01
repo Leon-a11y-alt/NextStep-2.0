@@ -1,5 +1,11 @@
 ---
+# Author: Lee Wei Keat
+# Contains non-sensitive AWS EC2 configuration.
+
 deployment_user: ubuntu
+deployment_group: ubuntu
+
+# Must match the GitHub Actions DEPLOY_PATH secret.
 deployment_path: /opt/nextstep
 
 required_packages:
@@ -7,5 +13,8 @@ required_packages:
   - curl
   - gnupg
   - git
+  - python3
 
 docker_service_name: docker
+
+environment_file_path: "{{ deployment_path }}/.env"

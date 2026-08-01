@@ -1,29 +1,43 @@
-# NextStep Ansible Configuration
+# NextStep Ansible Infrastructure as Code
 
-This folder contains the Infrastructure as Code configuration used to prepare the NextStep AWS EC2 production server.
+## Author
+
+**Name:** Lee Wei Keat  
+**Role:** Infrastructure as Code / Ansible Engineer
 
 ## Purpose
 
-The Ansible playbook automates the following server configuration:
+This Ansible configuration prepares an Ubuntu AWS EC2 server for the NextStep Continuous Deployment pipeline.
+
+The CD workflow is responsible for copying `docker-compose.prod.yml`, pulling the published Docker images and starting the containers.
+
+The Ansible playbook is responsible for preparing the server before deployment.
+
+## Automated Configuration
+
+The playbook performs the following tasks:
 
 - Updates the Ubuntu package cache
 - Installs required system packages
-- Installs Docker
+- Installs Docker Engine
 - Installs Docker Compose
 - Starts and enables Docker
-- Adds the Ubuntu deployment user to the Docker group
-- Creates the NextStep deployment directory
-- Copies the production Docker Compose file
-- Verifies the Docker installation
+- Adds the deployment user to the Docker group
+- Creates the production deployment directory
+- Creates the production `.env` file with secure permissions
+- Verifies Docker and Docker Compose
+- Validates that the server is ready for the CD pipeline
 
 ## Folder Structure
 
 ```text
 ansible/
-├── inventory.ini
+├── ansible.cfg
+├── inventory.ini.example
 ├── site.yml
+├── README.md
 ├── group_vars/
-│   └── all.yml
-├── files/
-│   └── docker-compose.prod.yml
-└── README.md
+│   ├── all.yml
+│   └── vault.yml.example
+└── templates/
+    └── backend.env.j2

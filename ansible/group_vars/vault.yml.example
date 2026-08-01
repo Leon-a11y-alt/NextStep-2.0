@@ -1,0 +1,10 @@
+---
+# Example values only.
+# Copy this file to vault.yml and insert the real production values.
+
+vault_database_url: "REPLACE_WITH_PRODUCTION_DATABASE_URL"
+vault_database_ssl: "require"
+vault_n8n_webhook_url: ""
+vault_email_otp_secret: "REPLACE_WITH_PRODUCTION_SECRET"
+vault_n8n_otp_webhook_url: ""
+vault_gemini_api_key: ""

@@ -22,8 +22,18 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Ansible local connection details and secrets
+# Ansible machine-specific inventories
 ansible/inventory.ini
-ansible/*.pem
-ansible/*.key
+ansible/inventory.local.ini
+
+# Ansible production secrets
+ansible/group_vars/vault.yml
 ansible/vault-password.txt
+
+# SSH private keys
+*.pem
+*.key
+
+# Generated environment files
+.env
+.env.local

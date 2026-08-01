@@ -1,30 +1,134 @@
 ---
-- name: Configure NextStep AWS EC2 server
+# Author: Lee Wei Keat
+# Role: Infrastructure as Code / Ansible Engineer
+# Purpose: Prepare an Ubuntu AWS EC2 server for the NextStep CD pipeline.
+
+- name: Prepare NextStep AWS EC2 production server
   hosts: nextstep_servers
   become: true
 
+  vars_files:
+    - group_vars/vault.yml
+
   tasks:
+    # -------------------------------------------------------------------------
+    # Base system configuration
+    # -------------------------------------------------------------------------
+    - name: Confirm target operating system is Ubuntu
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == "Ubuntu"
+        fail_msg: "This playbook supports Ubuntu servers only."
+        success_msg: "Ubuntu target confirmed."
+
     - name: Update Ubuntu package cache
       ansible.builtin.apt:
         update_cache: true
         cache_valid_time: 3600
 
-    - name: Install required packages
+    - name: Install required system packages
       ansible.builtin.apt:
         name: "{{ required_packages }}"
         state: present
 
-    - name: Install Docker
-      ansible.builtin.apt:
-        name: docker.io
-        state: present
+    # -------------------------------------------------------------------------
+    # Detect the existing Docker installation
+    # -------------------------------------------------------------------------
+    - name: Check whether Docker Engine is available
+      ansible.builtin.command:
+        cmd: docker --version
+      register: existing_docker
+      changed_when: false
+      failed_when: false
 
-    - name: Install Docker Compose plugin
-      ansible.builtin.apt:
-        name: docker-compose-v2
-        state: present
+    - name: Check whether Docker Compose is available
+      ansible.builtin.command:
+        cmd: docker compose version
+      register: existing_compose
+      changed_when: false
+      failed_when: false
 
-    - name: Start and enable Docker
+    # -------------------------------------------------------------------------
+    # Remove packages that conflict with Docker official packages
+    # Runs only when Docker or Compose is missing.
+    # -------------------------------------------------------------------------
+    - name: Remove conflicting Ubuntu Docker packages
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-doc
+          - docker-compose
+          - docker-compose-v2
+          - podman-docker
+          - containerd
+          - runc
+        state: absent
+      when: existing_docker.rc != 0 or existing_compose.rc != 0
+
+    # -------------------------------------------------------------------------
+    # Configure Docker official APT repository
+    # -------------------------------------------------------------------------
+    - name: Create Docker APT keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: existing_docker.rc != 0 or existing_compose.rc != 0
+
+    - name: Download Docker repository signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        owner: root
+        group: root
+        mode: "0644"
+      when: existing_docker.rc != 0 or existing_compose.rc != 0
+
+    - name: Determine Docker repository architecture
+      ansible.builtin.set_fact:
+        docker_apt_architecture: >-
+          {{
+            'amd64'
+            if ansible_architecture == 'x86_64'
+            else 'arm64'
+            if ansible_architecture in ['aarch64', 'arm64']
+            else ansible_architecture
+          }}
+      when: existing_docker.rc != 0 or existing_compose.rc != 0
+
+    - name: Add Docker official APT repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ docker_apt_architecture }}
+          signed-by=/etc/apt/keyrings/docker.asc]
+          https://download.docker.com/linux/ubuntu
+          {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+      when: existing_docker.rc != 0 or existing_compose.rc != 0
+
+    - name: Update package cache after adding Docker repository
+      ansible.builtin.apt:
+        update_cache: true
+      when: existing_docker.rc != 0 or existing_compose.rc != 0
+
+    - name: Install Docker Engine and Docker Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+      when: existing_docker.rc != 0 or existing_compose.rc != 0
+
+    # -------------------------------------------------------------------------
+    # Docker service and permissions
+    # -------------------------------------------------------------------------
+    - name: Start and enable Docker service
       ansible.builtin.systemd:
         name: "{{ docker_service_name }}"
         state: started
@@ -36,38 +140,92 @@
         groups: docker
         append: true
 
+    # -------------------------------------------------------------------------
+    # Prepare the deployment location used by GitHub Actions CD
+    # -------------------------------------------------------------------------
     - name: Create NextStep deployment directory
       ansible.builtin.file:
         path: "{{ deployment_path }}"
         state: directory
         owner: "{{ deployment_user }}"
-        group: "{{ deployment_user }}"
+        group: "{{ deployment_group }}"
         mode: "0755"
 
-    - name: Copy production Docker Compose file
-      ansible.builtin.copy:
-        src: files/docker-compose.prod.yml
-        dest: "{{ deployment_path }}/docker-compose.prod.yml"
+    - name: Create production environment file
+      ansible.builtin.template:
+        src: backend.env.j2
+        dest: "{{ environment_file_path }}"
         owner: "{{ deployment_user }}"
-        group: "{{ deployment_user }}"
-        mode: "0644"
+        group: "{{ deployment_group }}"
+        mode: "0600"
+      no_log: true
 
-    - name: Check Docker version
+    # -------------------------------------------------------------------------
+    # Verify Docker and Docker Compose
+    # -------------------------------------------------------------------------
+    - name: Check installed Docker version
       ansible.builtin.command:
         cmd: docker --version
       register: docker_version
       changed_when: false
 
-    - name: Display Docker version
-      ansible.builtin.debug:
-        var: docker_version.stdout
-
-    - name: Check Docker Compose version
+    - name: Check installed Docker Compose version
       ansible.builtin.command:
         cmd: docker compose version
       register: compose_version
       changed_when: false
 
-    - name: Display Docker Compose version
+    - name: Gather service information
+      ansible.builtin.service_facts:
+
+    - name: Confirm Docker service is running
+      ansible.builtin.assert:
+        that:
+          - "'docker.service' in ansible_facts.services"
+          - ansible_facts.services['docker.service'].state == "running"
+        fail_msg: "Docker service is missing or not running."
+        success_msg: "Docker service is installed and running."
+
+    # -------------------------------------------------------------------------
+    # Verify deployment configuration
+    # -------------------------------------------------------------------------
+    - name: Check deployment directory
+      ansible.builtin.stat:
+        path: "{{ deployment_path }}"
+      register: deployment_directory
+
+    - name: Confirm deployment directory exists
+      ansible.builtin.assert:
+        that:
+          - deployment_directory.stat.exists
+          - deployment_directory.stat.isdir
+          - deployment_directory.stat.pw_name == deployment_user
+        fail_msg: "Deployment directory is missing or has incorrect ownership."
+        success_msg: "Deployment directory is ready for the CD pipeline."
+
+    - name: Check production environment file
+      ansible.builtin.stat:
+        path: "{{ environment_file_path }}"
+      register: environment_file
+
+    - name: Confirm environment file exists securely
+      ansible.builtin.assert:
+        that:
+          - environment_file.stat.exists
+          - environment_file.stat.isreg
+          - environment_file.stat.mode == "0600"
+        fail_msg: "Production environment file is missing or has unsafe permissions."
+        success_msg: "Production environment file exists with secure permissions."
+
+    # -------------------------------------------------------------------------
+    # Final result
+    # -------------------------------------------------------------------------
+    - name: Display server preparation summary
       ansible.builtin.debug:
-        var: compose_version.stdout
+        msg:
+          - "NextStep EC2 preparation completed successfully."
+          - "Docker: {{ docker_version.stdout }}"
+          - "Docker Compose: {{ compose_version.stdout }}"
+          - "Deployment user: {{ deployment_user }}"
+          - "Deployment path: {{ deployment_path }}"
+          - "The EC2 server is ready for the GitHub Actions CD pipeline."
