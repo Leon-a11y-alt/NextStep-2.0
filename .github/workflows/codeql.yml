@@ -59,7 +59,7 @@ jobs:
 
     steps:
       - name: Check out the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # JavaScript and TypeScript are interpreted, so there is nothing to
       # compile — CodeQL can build its database straight from the source. No
