@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/lauzhengxian/nextstep-backend:latest
+          image: ghcr.io/leon-a11y-alt/nextstep-2.0/backend:latest
           ports:
             - containerPort: 4000  # the port the Express app listens on
           envFrom:

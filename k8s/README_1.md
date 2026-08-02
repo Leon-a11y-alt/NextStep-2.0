@@ -16,8 +16,8 @@ NextStep to a Google Compute Engine VM running k3s (lightweight Kubernetes).
 - **Platform:** Google Compute Engine VM (Ubuntu 22.04, amd64)
 - **Kubernetes:** k3s (self-installed, not GKE)
 - **Images:** pulled from public GHCR
-  - `ghcr.io/lauzhengxian/nextstep-backend:latest`
-  - `ghcr.io/lauzhengxian/nextstep-frontend:latest`
+  - `ghcr.io/leon-a11y-alt/nextstep-2.0/backend:latest`
+  - `ghcr.io/leon-a11y-alt/nextstep-2.0/frontend:latest`
 - **Database:** Supabase (managed PostgreSQL) — not containerised; the backend
   connects to it server-side via `DATABASE_URL`
 - **Exposure:** NodePort
@@ -72,8 +72,8 @@ Rebuild command (run on a machine with Docker, from the repo root):
 ```bash
 docker build \
   --build-arg NEXT_PUBLIC_API_URL=http://<VM-PUBLIC-IP>:30081 \
-  -t ghcr.io/lauzhengxian/nextstep-frontend:latest ./frontend
-docker push ghcr.io/lauzhengxian/nextstep-frontend:latest
+  -t ghcr.io/leon-a11y-alt/nextstep-2.0/frontend:latest ./frontend
+docker push ghcr.io/leon-a11y-alt/nextstep-2.0/frontend:latest
 
 # then tell the cluster to pull the new image:
 kubectl rollout restart deployment/frontend

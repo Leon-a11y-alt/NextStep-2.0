@@ -16,8 +16,11 @@
 #                         built IMAGES; CRITICAL fails (needs 2 + 3)
 #     6. ci-result      — single aggregate status check for branch protection
 #
-#   Stages 2, 3 and 4 run in PARALLEL (they don't depend on each other), so a
-#   full run stays fast. Stage 5 only starts once 2 and 3 have gone green.
+#   HOW THEY'RE ORDERED. Stages 1, 2 and 3 start at once — none depends on
+#   another, so a full run is only as slow as its longest chain. Stage 4 waits
+#   for stage 1: a repo that fails basic hygiene isn't worth spending a
+#   vulnerability scan on. Stage 5 waits for 2 and 3, because there's no point
+#   building images from code that doesn't test or compile.
 #
 #   If any stage fails, the commit/PR is marked ✗ on GitHub and the pipeline
 #   stops — so broken code never reaches `main`. cd.yml reuses this whole file
