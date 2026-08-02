@@ -1,0 +1,55 @@
+# ingress.yaml — a single, clean entry point for NextStep.
+#
+# WHY THIS EXISTS
+#   Without an Ingress the app is reached on raw NodePorts:
+#       frontend  http://<VM-IP>:30080
+#       backend   http://<VM-IP>:30081
+#   That works, but it exposes two arbitrary port numbers and forces the
+#   browser to make cross-origin calls to a different port.
+#
+#   This Ingress puts everything behind ONE address on the standard web port:
+#       http://<VM-IP>/           -> frontend (Next.js)
+#       http://<VM-IP>/api/...    -> backend  (Express API)
+#
+#   Because both now share an origin, the browser's API calls are same-origin
+#   (no CORS round-trips), and the URL you hand someone has no port in it.
+#
+# HOW IT WORKS
+#   k3s ships Traefik as its built-in ingress controller, already listening on
+#   ports 80/443 of the node. Traefik watches for Ingress objects like this one
+#   and starts routing the moment it is applied — nothing else to install.
+#
+#   The NodePort Services are deliberately left in place, so the old
+#   :30080 / :30081 URLs keep working as a fallback.
+#
+# Done by Khaing Khant Zaw (Deployment / CD).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nextstep
+  annotations:
+    # Send matched requests to the service as-is; our backend already expects
+    # to receive the /api prefix, so nothing is rewritten.
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+    # No host: is given on purpose — this matches ANY hostname, so it works
+    # with the bare IP today and with a real domain later, unchanged.
+    - http:
+        paths:
+          # More specific path first: /api/... must win over /.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 4000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000

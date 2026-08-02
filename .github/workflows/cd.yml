@@ -452,7 +452,7 @@ jobs:
           REPO=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
 
           # The manifests as committed (teammates' work, applied verbatim).
-          scp -i ~/.ssh/deploy_key k8s/backend.yaml k8s/frontend.yaml \
+          scp -i ~/.ssh/deploy_key k8s/backend.yaml k8s/frontend.yaml k8s/ingress.yaml \
             "$USER@$HOST:/tmp/"
 
           # k3s keeps its kubeconfig at /etc/rancher/k3s/k3s.yaml, readable by
@@ -461,7 +461,7 @@ jobs:
           # requiretty, so this works over a non-interactive SSH session.)
           ssh -i ~/.ssh/deploy_key "$USER@$HOST" bash -s <<EOF
             set -euo pipefail
-            sudo kubectl apply -f /tmp/backend.yaml -f /tmp/frontend.yaml
+            sudo kubectl apply -f /tmp/backend.yaml -f /tmp/frontend.yaml -f /tmp/ingress.yaml
             # Pin both Deployments to THIS commit's images — this is the
             # actual release step, and what makes rollbacks a one-liner.
             sudo kubectl set image deployment/backend \
