@@ -1,0 +1,48 @@
+# frontend.yaml — NextStep frontend (Next.js standalone)
+# Deploys the frontend image from GHCR and exposes it via NodePort 30080.
+#
+# NOTE: the backend API URL (NEXT_PUBLIC_API_URL) is baked into the image
+# at BUILD time, not read at runtime. The image currently deployed was built
+# with NEXT_PUBLIC_API_URL=http://34.124.158.162:30081 so the browser can
+# reach the backend. If the backend IP/port changes, the frontend image must
+# be rebuilt and pushed again — it can't be fixed by editing this manifest.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: ghcr.io/lauzhengxian/nextstep-frontend:latest
+          ports:
+            - containerPort: 3000  # Next.js standalone server port
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  type: NodePort                     # exposes the frontend outside the cluster
+  selector:
+    app: frontend
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30080                # the public entry point: http://<VM-public-IP>:30080
