@@ -3,19 +3,25 @@
 #
 # WHAT THIS DOES
 #   Every push and every pull request is automatically verified by GitHub
-#   Actions before anyone merges it. Four stages run in this order:
+#   Actions before anyone merges it. Six stages run:
 #
-#     1. quality        — repo hygiene: no committed secrets, no node_modules
+#     1. quality        — repo hygiene: no committed secrets, no node_modules,
+#                         lockfiles present, every JS file parses
 #     2. backend-test   — spin up a real PostgreSQL, seed it, run the API tests,
 #                         then boot the server and hit /api/health (smoke test)
 #     3. frontend-build — production `next build` must compile
-#     4. docker-build   — both Dockerfiles must build (needs 2 + 3 to pass)
+#     4. security-fs    — Trivy scans the repo for vulnerable dependencies,
+#                         committed secrets and insecure IaC; CRITICAL fails
+#     5. docker-build   — both Dockerfiles must build, then Trivy scans the
+#                         built IMAGES; CRITICAL fails (needs 2 + 3)
+#     6. ci-result      — single aggregate status check for branch protection
 #
-#   Stages 2 and 3 run in PARALLEL (they don't depend on each other), so a full
-#   run stays fast. Stage 4 only starts once both have gone green.
+#   Stages 2, 3 and 4 run in PARALLEL (they don't depend on each other), so a
+#   full run stays fast. Stage 5 only starts once 2 and 3 have gone green.
 #
 #   If any stage fails, the commit/PR is marked ✗ on GitHub and the pipeline
-#   stops — so broken code never reaches `main`.
+#   stops — so broken code never reaches `main`. cd.yml reuses this whole file
+#   as its gate, so nothing is ever published or deployed without it passing.
 # ─────────────────────────────────────────────────────────────────────────────
 name: CI
 
@@ -30,8 +36,15 @@ on:
   workflow_call:
 
 # If you push twice quickly, cancel the older run instead of paying for both.
+#
+# The group MUST include ${{ github.workflow }}. cd.yml calls this file as a
+# reusable workflow, and a called workflow re-evaluates its own concurrency
+# block — with a hard-coded "ci-" prefix the CD-invoked run and the standalone
+# run landed in the SAME group on main and cancelled each other on every push.
+# github.workflow resolves to the CALLER's name, so the two now read
+# "CI-refs/heads/main" and "CD-refs/heads/main" and coexist.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -70,6 +83,20 @@ jobs:
             test -f "$f" || { echo "::error::$f is missing"; exit 1; }
           done
           echo "OK: both lockfiles present."
+
+      # Cheapest possible correctness gate, and it needs no dependencies: the
+      # V8 parser itself. A typo that makes a file unparseable fails here in
+      # seconds instead of at runtime inside a container.
+      - name: Every JavaScript file parses
+        run: |
+          set -euo pipefail
+          FILES=$(git ls-files '*.js' '*.mjs' | grep -v -E '(^|/)node_modules/' || true)
+          COUNT=0
+          for f in $FILES; do
+            node --check "$f" || { echo "::error file=$f::syntax error"; exit 1; }
+            COUNT=$((COUNT + 1))
+          done
+          echo "OK: $COUNT JavaScript files parse cleanly."
 
   # ───────────────────────────────────────────────────────────────────────────
   # 2. BACKEND TESTS — against a real, disposable PostgreSQL database
@@ -184,13 +211,123 @@ jobs:
           if-no-files-found: error
 
   # ───────────────────────────────────────────────────────────────────────────
-  # 4. DOCKER IMAGE BUILD — proves both containers still build
-  #    (build only, no push — publishing happens in the CD pipeline)
+  # 4. SECURITY — Trivy filesystem scan (DevSecOps gate #1)
+  #
+  #    Scans the repository itself, three ways at once:
+  #      • vuln     — known CVEs in backend/ and frontend/ dependency trees,
+  #                   read straight from the lockfiles
+  #      • secret   — credentials accidentally committed (keys, tokens, PEMs)
+  #      • misconfig— insecure Dockerfile / docker-compose / Kubernetes settings
+  #
+  #    Two passes on purpose. The REPORT pass prints everything and uploads
+  #    SARIF to the repository's Security tab, so nothing is hidden. The GATE
+  #    pass fails the build only on CRITICAL findings that actually have a fix
+  #    available (--ignore-unfixed) — a gate nobody can act on just teaches the
+  #    team to ignore the pipeline.
+  # ───────────────────────────────────────────────────────────────────────────
+  security-fs:
+    name: Security — Trivy filesystem scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [quality]
+    permissions:
+      contents: read
+      security-events: write # to publish SARIF to the Security tab
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      # Installed from the official script rather than pinning a version we
+      # cannot verify offline; the version actually used is printed below.
+      - name: Install Trivy
+        run: |
+          set -euo pipefail
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin
+          trivy --version
+
+      - name: Report — vulnerabilities, secrets and misconfigurations
+        run: |
+          set -euo pipefail
+          trivy fs . \
+            --scanners vuln,secret,misconfig \
+            --severity LOW,MEDIUM,HIGH,CRITICAL \
+            --format table \
+            --no-progress \
+            --exit-code 0 | tee trivy-fs.txt
+
+      - name: Publish the findings to the run summary
+        if: always()
+        run: |
+          {
+            echo "### 4 · Trivy filesystem scan :mag:"
+            echo ""
+            echo '<details><summary>Full report</summary>'
+            echo ""
+            echo '```'
+            tail -c 40000 trivy-fs.txt || true
+            echo '```'
+            echo ""
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Produce SARIF for the Security tab
+        if: always()
+        run: |
+          trivy fs . \
+            --scanners vuln,secret,misconfig \
+            --format sarif \
+            --no-progress \
+            --output trivy-fs.sarif \
+            --exit-code 0
+
+      - name: Upload SARIF
+        if: always()
+        continue-on-error: true # code scanning may be disabled on the repo
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-filesystem
+
+      - name: Upload the raw report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-filesystem-report
+          path: |
+            trivy-fs.txt
+            trivy-fs.sarif
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # THE GATE. Anything CRITICAL with a fix available stops the pipeline.
+      - name: Gate — fail on fixable CRITICAL findings
+        run: |
+          set -euo pipefail
+          trivy fs . \
+            --scanners vuln,secret \
+            --severity CRITICAL \
+            --ignore-unfixed \
+            --no-progress \
+            --exit-code 1
+          echo "OK: no fixable CRITICAL vulnerabilities or exposed secrets."
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 5. DOCKER IMAGE BUILD + IMAGE SCAN (DevSecOps gate #2)
+  #
+  #    Proves both containers still build, then scans the built images — OS
+  #    packages and application dependencies inside the layers, which the
+  #    filesystem scan above cannot see. Build only, no push; publishing
+  #    happens in the CD pipeline, which re-scans what it published.
   # ───────────────────────────────────────────────────────────────────────────
   docker-build:
-    name: Docker images build
+    name: Docker images build + Trivy image scan
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     needs: [backend-test, frontend-build]
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
@@ -198,11 +335,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # `load: true` puts the image into the local Docker daemon so Trivy can
+      # scan the exact artifact this commit produces.
       - name: Build the backend image
         uses: docker/build-push-action@v6
         with:
           context: ./backend
           push: false
+          load: true
           tags: nextstep-backend:ci
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
@@ -212,23 +352,152 @@ jobs:
         with:
           context: ./frontend
           push: false
+          load: true
           tags: nextstep-frontend:ci
           build-args: |
             NEXT_PUBLIC_API_URL=http://localhost:4000
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
 
-      - name: Pipeline summary
+      - name: Install Trivy
+        run: |
+          set -euo pipefail
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin
+          trivy --version
+
+      - name: Report — scan both images
+        run: |
+          set -euo pipefail
+          for img in nextstep-backend:ci nextstep-frontend:ci; do
+            echo "::group::Trivy image scan — $img"
+            trivy image "$img" \
+              --scanners vuln,secret \
+              --severity HIGH,CRITICAL \
+              --format table \
+              --no-progress \
+              --exit-code 0 | tee -a trivy-images.txt
+            echo "::endgroup::"
+          done
+
+      - name: Produce SARIF for the Security tab
+        if: always()
+        run: |
+          for img in backend frontend; do
+            trivy image "nextstep-$img:ci" \
+              --scanners vuln \
+              --format sarif \
+              --no-progress \
+              --output "trivy-image-$img.sarif" \
+              --exit-code 0 || true
+          done
+
+      - name: Upload backend image SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image-backend.sarif
+          category: trivy-image-backend
+
+      - name: Upload frontend image SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image-frontend.sarif
+          category: trivy-image-frontend
+
+      - name: Upload the image scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-reports
+          path: |
+            trivy-images.txt
+            trivy-image-*.sarif
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # THE GATE. A fixable CRITICAL inside an image means the base image or a
+      # dependency needs bumping before this can ship.
+      - name: Gate — fail on fixable CRITICAL findings in either image
+        run: |
+          set -euo pipefail
+          for img in nextstep-backend:ci nextstep-frontend:ci; do
+            echo "Gating $img …"
+            trivy image "$img" \
+              --scanners vuln \
+              --severity CRITICAL \
+              --ignore-unfixed \
+              --no-progress \
+              --exit-code 1
+          done
+          echo "OK: no fixable CRITICAL vulnerabilities in either image."
+
+      - name: Image scan summary
+        if: always()
         run: |
           {
-            echo "### CI passed :white_check_mark:"
+            echo "### 5 · Trivy image scan :whale:"
             echo ""
-            echo "| Stage | Result |"
-            echo "| --- | --- |"
-            echo "| Quality checks | passed |"
-            echo "| Backend tests (PostgreSQL) | passed |"
-            echo "| Frontend build | passed |"
-            echo "| Docker images | built |"
+            echo '<details><summary>Full report (HIGH + CRITICAL)</summary>'
             echo ""
-            echo "Commit \`${GITHUB_SHA::7}\` on \`${GITHUB_REF_NAME}\` is safe to merge."
+            echo '```'
+            tail -c 40000 trivy-images.txt || true
+            echo '```'
+            echo ""
+            echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 6. CI RESULT — one status check to rule them all
+  #
+  #    Branch protection points at this single job, so adding a stage above
+  #    never means reconfiguring the protected-branch rules. It runs even when
+  #    an upstream job failed, publishes the table, then fails if anything
+  #    upstream did.
+  # ───────────────────────────────────────────────────────────────────────────
+  ci-result:
+    name: CI result
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+    needs: [quality, backend-test, frontend-build, security-fs, docker-build]
+    steps:
+      - name: Summarise every stage
+        env:
+          R_QUALITY: ${{ needs.quality.result }}
+          R_BACKEND: ${{ needs.backend-test.result }}
+          R_FRONTEND: ${{ needs.frontend-build.result }}
+          R_SECURITY: ${{ needs.security-fs.result }}
+          R_DOCKER: ${{ needs.docker-build.result }}
+        run: |
+          icon() { case "$1" in success) echo ":white_check_mark:";; skipped) echo ":fast_forward:";; *) echo ":x:";; esac; }
+
+          {
+            echo "## CI summary — \`${GITHUB_REF_NAME}\` @ \`${GITHUB_SHA::7}\`"
+            echo ""
+            echo "| # | Stage | Result |"
+            echo "| --- | --- | --- |"
+            echo "| 1 | Quality checks (hygiene + syntax) | $(icon "$R_QUALITY") $R_QUALITY |"
+            echo "| 2 | Backend tests (real PostgreSQL + smoke test) | $(icon "$R_BACKEND") $R_BACKEND |"
+            echo "| 3 | Frontend build (Next.js) | $(icon "$R_FRONTEND") $R_FRONTEND |"
+            echo "| 4 | Trivy filesystem scan | $(icon "$R_SECURITY") $R_SECURITY |"
+            echo "| 5 | Docker build + Trivy image scan | $(icon "$R_DOCKER") $R_DOCKER |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          FAILED=0
+          for r in "$R_QUALITY" "$R_BACKEND" "$R_FRONTEND" "$R_SECURITY" "$R_DOCKER"; do
+            case "$r" in success|skipped) ;; *) FAILED=1 ;; esac
+          done
+
+          if [ "$FAILED" = "1" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**This commit is not safe to merge or deploy.**" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::One or more CI stages failed."
+            exit 1
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**All gates green — commit \`${GITHUB_SHA::7}\` is safe to merge and deploy.**" >> "$GITHUB_STEP_SUMMARY"

@@ -35,28 +35,36 @@ a test can ever be published.
 
 ---
 
-## 3. CI pipeline — 4 stages
+## 3. CI pipeline — 6 stages
 
 ```
                     ┌──────────────────────┐
                     │ 1. Quality checks    │
                     │  secrets / hygiene   │
+                    │  every .js parses    │
                     └──────────┬───────────┘
                                │
-              ┌────────────────┴────────────────┐
-              ▼                                 ▼
-   ┌────────────────────────┐      ┌────────────────────────┐
-   │ 2. Backend tests       │      │ 3. Frontend build      │
-   │  PostgreSQL 16 service │      │  next build (prod)     │
-   │  db:init → npm test    │      │  upload artifact       │
-   │  → /api/health smoke   │      │                        │
-   └───────────┬────────────┘      └───────────┬────────────┘
-               └──────────────┬────────────────┘
-                              ▼
-                  ┌──────────────────────────┐
-                  │ 4. Docker images build   │
-                  │  backend + frontend      │
-                  └──────────────────────────┘
+        ┌──────────────────────┼──────────────────────┐
+        ▼                      ▼                      ▼
+┌──────────────────┐ ┌──────────────────┐ ┌────────────────────────┐
+│ 2. Backend tests │ │ 3. Frontend build│ │ 4. Trivy FS scan       │
+│ PostgreSQL 16    │ │ next build (prod)│ │  vuln + secret +       │
+│ db:init→npm test │ │ upload artifact  │ │  misconfig, SARIF      │
+│ → /api/health    │ │                  │ │  CRITICAL = fail       │
+└────────┬─────────┘ └────────┬─────────┘ └───────────┬────────────┘
+         └─────────┬──────────┘                       │
+                   ▼                                  │
+   ┌───────────────────────────────────┐              │
+   │ 5. Docker build + Trivy IMAGE scan│              │
+   │  backend + frontend images        │              │
+   │  CRITICAL (fixable) = fail        │              │
+   └───────────────┬───────────────────┘              │
+                   └──────────────┬───────────────────┘
+                                  ▼
+                    ┌──────────────────────────┐
+                    │ 6. CI result             │
+                    │  one required check      │
+                    └──────────────────────────┘
 ```
 
 ### Stage 1 — Quality checks (fails in ~15 seconds)
@@ -107,31 +115,81 @@ artifact, so the exact bytes each commit produced can be inspected.
 Stages 2 and 3 run **in parallel** — they're independent, so a full CI run takes
 about as long as the slower of the two rather than their sum.
 
-### Stage 4 — Docker images build
+### Stage 4 — Trivy filesystem scan (security)
+
+Scans the repository three ways in one pass:
+
+| Scanner | Finds |
+| --- | --- |
+| `vuln` | known CVEs in the backend and frontend dependency trees, read from the lockfiles |
+| `secret` | credentials committed by accident — API keys, tokens, private keys |
+| `misconfig` | insecure settings in the Dockerfiles, compose files and Kubernetes manifests |
+
+Two passes, deliberately. The **report** pass prints everything, uploads SARIF to
+the repository's **Security tab**, and attaches the raw report as an artifact —
+nothing is hidden. The **gate** pass then fails the build only on `CRITICAL`
+findings that have a fix available (`--ignore-unfixed`), because a gate nobody
+can act on just teaches the team to ignore the pipeline.
+
+### Stage 5 — Docker images build + Trivy image scan
 
 Only starts once **both** stages 2 and 3 are green (`needs:`). It builds both
 `Dockerfile`s to prove the containers still assemble — a broken Dockerfile is
-invisible to `npm test`. Nothing is pushed here; publishing is CD's job. Layer
-caching (`type=gha`) makes repeat runs much faster.
+invisible to `npm test` — and then scans the built images.
 
-Also configured: **`concurrency`** cancels a superseded run if you push twice in
-a row, and **`actions/setup-node` npm caching** avoids re-downloading packages.
+The image scan sees what the filesystem scan cannot: the OS packages inside the
+layers (Alpine/Debian CVEs) and anything a build step pulled in. Images are built
+with `load: true` so Trivy scans the exact artifact this commit produced. Same
+two-pass rule: report + SARIF for everything, fail on fixable `CRITICAL`.
+
+Nothing is pushed here; publishing is CD's job — and CD re-scans what it pushed.
+Layer caching (`type=gha`) makes repeat runs much faster.
+
+### Stage 6 — CI result
+
+One job that `needs:` all the others, runs even when they fail (`if: always()`),
+publishes the per-stage table, and exits non-zero if anything upstream failed.
+**Point branch protection at this single check** — then adding a stage later
+never means reconfiguring the protected-branch rules.
+
+### A note on `concurrency`
+
+The group is `${{ github.workflow }}-${{ github.ref }}`, and the workflow name
+must be in it. CD calls this file as a reusable workflow, and a called workflow
+re-evaluates its own `concurrency` block: with a hard-coded `ci-` prefix, the
+CD-invoked run and the standalone run landed in the *same* group on `main` and
+cancelled each other on every push — CI runs #19, #22 and #23 were all cancelled
+for exactly this reason, which made the CI badge read "failing" while the
+pipeline was in fact passing inside CD. Including `github.workflow` (which
+resolves to the *caller's* name) separates them.
 
 ---
 
-## 4. CD pipeline — 3 jobs
+## 4. CD pipeline — 4 stages, 2 deploy targets
 
 ```
    merge PR into main
           │
           ▼
-   ┌─────────────┐    ┌────────────────────┐    ┌──────────────────────┐
-   │ 1. CI gate  │───▶│ 2. Publish to GHCR │───▶│ 3. Deploy            │
-   │ (reuses     │    │  :<commit-sha>     │    │  environment:        │
-   │  ci.yml)    │    │  :latest           │    │  production          │
-   └─────────────┘    └────────────────────┘    └──────────────────────┘
-       fail = stop         automatic                 approval gate
+   ┌─────────────┐   ┌──────────────────┐   ┌────────────────────┐
+   │ 1. CI gate  │──▶│ 2. Publish GHCR  │──▶│ 3. Trivy scan the  │
+   │ (reuses     │   │  :<commit-sha>   │   │    PUBLISHED images│
+   │  ci.yml)    │   │  :latest         │   │  CRITICAL = stop   │
+   └─────────────┘   └──────────────────┘   └─────────┬──────────┘
+       fail = stop        automatic                   │
+                                       ┌──────────────┴──────────────┐
+                                       ▼                             ▼
+                          ┌────────────────────────┐   ┌────────────────────────┐
+                          │ 4a. Deploy to AWS EC2  │   │ 4b. Deploy to k3s      │
+                          │  docker compose / SSH  │   │  kubectl set image     │
+                          │  + /api/health check   │   │  + rollout status      │
+                          └────────────────────────┘   └────────────────────────┘
+                              environment: production      environment: production
 ```
+
+Each deploy target activates **only when its own secrets exist**, so the pipeline
+stays green while an environment is still being set up, and the team can run
+either target (or both) without editing the workflow.
 
 ### Job 1 — CI gate (reusable workflow)
 
@@ -160,29 +218,63 @@ access token.
 > build time, so the API URL is a Docker **build-arg** fed from a repository
 > variable — not a runtime environment variable.
 
-### Job 3 — Deploy
+### Job 3 — Scan the published images (Trivy)
 
-Uses a GitHub **Environment** (`production`), which is where an approval gate is
-configured: add a required reviewer and the job pauses until a human clicks
-Approve. That's the distinction between *continuous delivery* (every commit is
-release-ready — jobs 1–2, fully automatic) and *continuous deployment* (it goes
-live by itself).
+CI scanned the images it *built*; this scans them again by their GHCR tag — the
+byte-identical artifact a server is about to pull. A fixable `CRITICAL` here
+stops the release before it reaches any environment. It has a second use: re-run
+this job weeks later and it re-checks an already-released image against a *newer*
+vulnerability database, which is how you learn that last month's release became
+vulnerable overnight.
 
-The deploy step copies [docker-compose.prod.yml](../docker-compose.prod.yml) to the
-server over SSH, then pulls the images tagged with *this exact commit* and
-restarts the stack. Secrets on the server stay in a `.env` file there — never in
-the image, never in git. Afterwards it polls `/api/health` and **fails the run if
-the deployed app doesn't respond**, so a bad release is visible immediately.
+### Job 4a — Deploy to AWS EC2 (cloud deployment)
 
-**Current status, stated honestly:** no hosting server has been provisioned yet,
-so the deploy job detects the missing `DEPLOY_HOST` secret and skips with an
-explanation in the run summary instead of failing. Jobs 1 and 2 are fully live —
-every commit on `main` really does produce published, versioned images. Adding
-the four secrets (`DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_PATH`)
-activates deployment with **no workflow edit**.
+The cloud target. The EC2 instance never builds anything: it pulls the exact
+images this commit published to GHCR, so what was tested and scanned is literally
+what runs.
 
-**Rollback procedure:** re-run the deploy job on an older commit, or on the
-server run `IMAGE_TAG=<older-sha> docker compose -f docker-compose.prod.yml up -d`.
+1. `scp` [docker-compose.prod.yml](../docker-compose.prod.yml) from this commit to the instance
+2. `docker login ghcr.io` with the run's own `GITHUB_TOKEN`
+3. `docker compose pull` + `up -d --remove-orphans` with `IMAGE_TAG=<commit-sha>`
+4. poll `/api/health` on the box for up to 150 s — **a release that starts but
+   does not serve fails the pipeline**, and the job prints the backend logs
+5. prune old images
+
+Secrets on the instance stay in `$APP_DIR/.env` — never in the image, never in
+git. The job fails with a clear message if that file is missing.
+
+| Secret / variable | Meaning |
+| --- | --- |
+| `AWS_HOST` | EC2 public IPv4 or DNS name |
+| `AWS_USER` | SSH user (`ubuntu` on Ubuntu AMIs, `ec2-user` on Amazon Linux) |
+| `AWS_SSH_KEY` | contents of the EC2 key pair `.pem` |
+| `AWS_APP_DIR` *(variable, optional)* | deploy directory, defaults to `/opt/nextstep` |
+
+The instance itself is provisioned by the team's Ansible playbook
+(`ansible/site.yml` on the `feature/ansible` branch); this job only performs the
+release onto it.
+
+### Job 4b — Deploy to the k3s cluster
+
+The Kubernetes target, unchanged: SSH to the cluster VM, `kubectl apply` the
+committed manifests, then `kubectl set image` both Deployments to this commit's
+tags and wait on `rollout status`. Secrets: `DEPLOY_HOST`, `DEPLOY_USER`,
+`DEPLOY_SSH_KEY`.
+
+Both deploy jobs use the `production` GitHub **Environment**, which is where an
+approval gate lives: add a required reviewer and the job pauses until a human
+clicks Approve. That is the distinction between *continuous delivery* (every
+commit is release-ready — jobs 1–3, fully automatic) and *continuous deployment*
+(it goes live by itself).
+
+**Each target is a no-op until its own secrets exist** — it detects the missing
+secret and skips with an explanation in the run summary instead of failing, so
+the pipeline stays green while an environment is being set up and no workflow
+edit is needed to switch it on.
+
+**Rollback procedure:** re-run the deploy job on an older commit (the image tag
+*is* the commit SHA), or on the instance run
+`IMAGE_TAG=<older-sha> docker compose -f docker-compose.prod.yml up -d`.
 
 ---
 
@@ -225,9 +317,34 @@ merging into `main`, which turns the pipeline from advisory into enforced.
 
 ## 8. Roadmap (what would come next)
 
-- Add ESLint + a `lint` stage (the frontend has no ESLint config yet, so linting
-  is deliberately not in the pipeline rather than silently passing).
-- Frontend component tests (React Testing Library) and coverage reporting.
-- `npm audit` / Trivy image scanning as a security stage.
+Delivered since the first version of this document: **Trivy filesystem and image
+scanning as gating security stages** (CI stages 4 and 5, CD job 3), the
+**aggregate `CI result` check**, a **JavaScript parse gate**, and **AWS EC2 as a
+deploy target** alongside k3s.
+
+Still open, and honest about why:
+
+- **ESLint + a `lint` stage.** Neither app has an ESLint config or the
+  dependency, so adding the stage means adding devDependencies and regenerating
+  both lockfiles — a change that must be made by someone who can run `npm` and
+  commit the resulting `package-lock.json`. Until then, CI's parse gate
+  (`node --check` on every JS file) is the stand-in: it catches syntax errors,
+  not style. To close this properly:
+
+  ```bash
+  cd frontend && npm i -D eslint eslint-config-next   # regenerates the lockfile
+  cd ../backend && npm i -D eslint
+  # then add a `lint` job to ci.yml mirroring the parse-gate job
+  ```
+
+- **Coverage reporting.** `backend/tests/api.test.js` uses a hand-rolled runner
+  (`require("assert")` + a collected list), not `node:test`, so Node's built-in
+  `--experimental-test-coverage` does not apply and a coverage tool (c8/nyc)
+  would again mean a new devDependency. Migrating the file to `node:test` would
+  unlock coverage with no dependency at all.
+
+- **Frontend tests.** All 17 tests are backend; the frontend is built by CI but
+  never tested.
+
 - A staging environment deployed on every `dev` push, promoted to production on
   release tags.

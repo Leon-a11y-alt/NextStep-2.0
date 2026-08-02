@@ -11,9 +11,15 @@
 #                    (GitHub Container Registry), tagged with the commit SHA
 #                    and `latest`. This is the "delivery" half: a versioned,
 #                    runnable artifact exists for every commit on main.
-#     3. deploy    — pulls those exact images onto the server and restarts the
-#                    stack. Protected by a GitHub Environment ("production"),
-#                    so it can require a manual approval click.
+#     3. scan      — Trivy re-scans the images AS PUBLISHED. CI scanned what it
+#                    built; this scans the exact artifact that is about to be
+#                    pulled onto a server. A fixable CRITICAL stops the deploy.
+#     4. deploy    — rolls those exact images out. Two targets are supported and
+#                    each activates only when its own secrets exist:
+#                      • AWS EC2 (docker compose over SSH)  — deploy-aws
+#                      • k3s Kubernetes cluster (kubectl)   — deploy
+#                    Both sit behind the "production" GitHub Environment, so a
+#                    required reviewer can gate the release with a click.
 #
 #   Delivery vs Deployment: step 2 always runs automatically. Step 3 is the
 #   only manual gate, which is what "continuous delivery" means in practice.
@@ -111,7 +117,258 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ───────────────────────────────────────────────────────────────────────────
-  # 3. DEPLOY — roll the published images out to the k3s cluster
+  # 3. SCAN THE PUBLISHED IMAGES — the last gate before anything is deployed
+  #
+  #    CI already scanned the images it built. This scans them again by their
+  #    GHCR digest/tag, i.e. the byte-identical artifact a server is about to
+  #    pull. It also means a rebuild-free re-run of this job re-checks an
+  #    already-released image against a NEWER vulnerability database — which is
+  #    how you find out that yesterday's release became vulnerable overnight.
+  # ───────────────────────────────────────────────────────────────────────────
+  scan-images:
+    name: Scan published images (Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: publish
+    permissions:
+      contents: read
+      packages: read # to pull the images back out of GHCR
+      security-events: write # to publish SARIF to the Security tab
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Trivy
+        run: |
+          set -euo pipefail
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin
+          trivy --version
+
+      - name: Work out the image names
+        id: names
+        run: echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Report — scan both published images
+        run: |
+          set -euo pipefail
+          for svc in backend frontend; do
+            IMG="ghcr.io/${{ steps.names.outputs.repo }}/$svc:${GITHUB_SHA}"
+            echo "::group::Trivy — $IMG"
+            trivy image "$IMG" \
+              --scanners vuln,secret \
+              --severity HIGH,CRITICAL \
+              --format table \
+              --no-progress \
+              --exit-code 0 | tee -a trivy-published.txt
+            echo "::endgroup::"
+            trivy image "$IMG" \
+              --scanners vuln \
+              --format sarif \
+              --no-progress \
+              --output "trivy-published-$svc.sarif" \
+              --exit-code 0 || true
+          done
+
+      - name: Upload backend SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-published-backend.sarif
+          category: trivy-published-backend
+
+      - name: Upload frontend SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-published-frontend.sarif
+          category: trivy-published-frontend
+
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-published-image-reports
+          path: |
+            trivy-published.txt
+            trivy-published-*.sarif
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # THE RELEASE GATE.
+      - name: Gate — no fixable CRITICAL may reach production
+        run: |
+          set -euo pipefail
+          for svc in backend frontend; do
+            IMG="ghcr.io/${{ steps.names.outputs.repo }}/$svc:${GITHUB_SHA}"
+            echo "Gating $IMG …"
+            trivy image "$IMG" \
+              --scanners vuln \
+              --severity CRITICAL \
+              --ignore-unfixed \
+              --no-progress \
+              --exit-code 1
+          done
+          echo "OK: both published images cleared the CRITICAL gate."
+
+      - name: Scan summary
+        if: always()
+        run: |
+          {
+            echo "### Published images scanned :shield:"
+            echo ""
+            echo '<details><summary>Trivy report (HIGH + CRITICAL)</summary>'
+            echo ""
+            echo '```'
+            tail -c 40000 trivy-published.txt || true
+            echo '```'
+            echo ""
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 4a. DEPLOY TO AWS — the cloud deployment target
+  #
+  #    Pulls the exact images this commit published onto an AWS EC2 instance
+  #    and restarts the stack with docker-compose.prod.yml. The images come
+  #    from GHCR, so the EC2 box never builds anything: what was tested and
+  #    scanned is literally what runs.
+  #
+  #    Zero-downtime-ish: compose recreates the containers in place, and the
+  #    job then polls /api/health on the box until it answers — a broken
+  #    release fails the pipeline instead of silently serving errors.
+  #    Rollback = re-run this job from an older commit (tag = commit SHA).
+  #
+  #    It is a no-op until the secrets exist, so the pipeline stays green while
+  #    the instance is still being set up. Add these repository secrets
+  #    (Settings → Secrets and variables → Actions) and it deploys for real:
+  #      AWS_HOST      the EC2 public IPv4 / DNS name
+  #      AWS_USER      the SSH user (ubuntu on Ubuntu AMIs, ec2-user on AL2)
+  #      AWS_SSH_KEY   the private half of the EC2 key pair (.pem contents)
+  #    Optional variable: AWS_APP_DIR (defaults to /opt/nextstep)
+  #
+  #    The instance itself is provisioned by the team's Ansible playbook
+  #    (ansible/site.yml) — this job only performs the release.
+  # ───────────────────────────────────────────────────────────────────────────
+  deploy-aws:
+    name: Deploy to AWS EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [publish, scan-images]
+    environment: production
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Are the AWS deployment secrets configured?
+        id: check
+        run: |
+          if [ -n "${{ secrets.AWS_HOST }}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Explain the skip
+        if: steps.check.outputs.ready == 'false'
+        run: |
+          {
+            echo "### AWS deploy skipped :pause_button:"
+            echo ""
+            echo "The images for \`${GITHUB_SHA::7}\` are published and scanned, but the"
+            echo "EC2 secrets are not configured yet."
+            echo ""
+            echo "To go live, add: \`AWS_HOST\`, \`AWS_USER\`, \`AWS_SSH_KEY\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "No AWS target configured — skipping (this is not a failure)."
+
+      - name: Release onto EC2 over SSH
+        if: steps.check.outputs.ready == 'true'
+        env:
+          SSH_KEY: ${{ secrets.AWS_SSH_KEY }}
+          HOST: ${{ secrets.AWS_HOST }}
+          USER: ${{ secrets.AWS_USER }}
+          APP_DIR: ${{ vars.AWS_APP_DIR || '/opt/nextstep' }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/aws_key
+          chmod 600 ~/.ssh/aws_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          REPO=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+
+          # Ship the compose file from THIS commit, so the running stack always
+          # matches the repository state that produced it.
+          scp -i ~/.ssh/aws_key docker-compose.prod.yml "$USER@$HOST:/tmp/docker-compose.prod.yml"
+
+          ssh -i ~/.ssh/aws_key "$USER@$HOST" \
+            IMAGE_REPO="ghcr.io/$REPO" \
+            IMAGE_TAG="${GITHUB_SHA}" \
+            APP_DIR="$APP_DIR" \
+            GHCR_USER="$GHCR_USER" \
+            GHCR_TOKEN="$GHCR_TOKEN" \
+            'bash -euo pipefail -s' <<'REMOTE'
+            sudo mkdir -p "$APP_DIR"
+            sudo chown "$(id -u):$(id -g)" "$APP_DIR"
+            mv /tmp/docker-compose.prod.yml "$APP_DIR/docker-compose.prod.yml"
+            cd "$APP_DIR"
+
+            # The backend reads its real secrets from a .env that lives ONLY on
+            # the instance (never in git, never in the image).
+            if [ ! -f .env ]; then
+              echo "::error::$APP_DIR/.env is missing on the instance — create it (DATABASE_URL etc.) and re-run."
+              exit 1
+            fi
+
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+            export IMAGE_REPO IMAGE_TAG
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            # Wait for the new containers to actually serve, not just start.
+            for i in $(seq 1 30); do
+              if curl -fsS http://localhost:4000/api/health > /tmp/health.json 2>/dev/null; then
+                echo "healthy: $(cat /tmp/health.json)"
+                docker compose -f docker-compose.prod.yml ps
+                docker image prune -f >/dev/null 2>&1 || true
+                exit 0
+              fi
+              sleep 5
+            done
+
+            echo "::error::The backend never became healthy after the release."
+            docker compose -f docker-compose.prod.yml ps
+            docker compose -f docker-compose.prod.yml logs --tail=80 backend
+            exit 1
+          REMOTE
+
+      - name: Release summary
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          {
+            echo "### Deployed to AWS EC2 :rocket:"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Commit | \`${GITHUB_SHA::7}\` |"
+            echo "| Images | \`ghcr.io/${GITHUB_REPOSITORY,,}/{backend,frontend}:${GITHUB_SHA::7}\` |"
+            echo "| Health check | passed (\`/api/health\`) |"
+            echo ""
+            echo "Roll back by re-running this job from an older commit — the image tag is the commit SHA."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 4b. DEPLOY — roll the published images out to the k3s cluster
   #
   #    The app runs on Kubernetes (k3s on a GCP VM — manifests in k8s/). This
   #    job SSHes to that VM, applies the committed manifests, then pins both
@@ -128,9 +385,9 @@ jobs:
   #      DEPLOY_SSH_KEY   a private key whose public half is on the VM
   # ───────────────────────────────────────────────────────────────────────────
   deploy:
-    name: Deploy to production
+    name: Deploy to k3s cluster
     runs-on: ubuntu-latest
-    needs: publish
+    needs: [publish, scan-images]
     # A GitHub Environment. Add a "required reviewer" to it and this job waits
     # for a human to click Approve before anything reaches production.
     environment: production
