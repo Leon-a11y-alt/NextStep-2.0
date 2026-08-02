@@ -1,20 +1,48 @@
 ---
-# Author: Lee Wei Keat
-# Contains non-sensitive AWS EC2 configuration.
+# Role: Infrastructure as Code
+# Non-sensitive configuration for the NextStep GCP K3s deployment.
 
-deployment_user: ubuntu
-deployment_group: ubuntu
-
-# Must match the GitHub Actions DEPLOY_PATH secret.
-deployment_path: /opt/nextstep
+# ---------------------------------------------------------------------------
+# Target server
+# ---------------------------------------------------------------------------
 
 required_packages:
-  - ca-certificates
   - curl
-  - gnupg
-  - git
+  - ca-certificates
   - python3
 
-docker_service_name: docker
+# ---------------------------------------------------------------------------
+# K3s
+# ---------------------------------------------------------------------------
+k3s_service_name: k3s
+k3s_binary_path: /usr/local/bin/k3s
+k3s_install_script_path: /tmp/install-k3s.sh
+k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
 
-environment_file_path: "{{ deployment_path }}/.env"
+# The GCP SSH user's home directory and kubeconfig.
+remote_user_home: "/home/{{ ansible_user }}"
+user_kube_directory: "{{ remote_user_home }}/.kube"
+user_kubeconfig_path: "{{ user_kube_directory }}/config"
+
+# ---------------------------------------------------------------------------
+# Kubernetes resources
+# ---------------------------------------------------------------------------
+kubernetes_namespace: default
+
+backend_secret_name: backend-secrets
+
+backend_deployment_name: backend
+frontend_deployment_name: frontend
+
+backend_service_name: backend
+frontend_service_name: frontend
+
+backend_node_port: 30081
+frontend_node_port: 30080
+
+# ---------------------------------------------------------------------------
+# Manifest locations on the remote VM
+# ---------------------------------------------------------------------------
+remote_manifest_directory: /opt/nextstep/manifests
+remote_backend_manifest: "{{ remote_manifest_directory }}/backend.yaml"
+remote_frontend_manifest: "{{ remote_manifest_directory }}/frontend.yaml"

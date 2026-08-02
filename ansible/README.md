@@ -1,43 +1,48 @@
-# NextStep Ansible Infrastructure as Code
+# NextStep GCP K3s Infrastructure as Code
 
 ## Author
 
 **Name:** Lee Wei Keat  
-**Role:** Infrastructure as Code / Ansible Engineer
+**Role:** Infrastructure as Code
 
 ## Purpose
 
-This Ansible configuration prepares an Ubuntu AWS EC2 server for the NextStep Continuous Deployment pipeline.
+This playbook automates the manual provisioning and deployment steps documented
+in `k8s/setup-commands.sh`.
 
-The CD workflow is responsible for copying `docker-compose.prod.yml`, pulling the published Docker images and starting the containers.
+It configures a Google Compute Engine Ubuntu VM, installs K3s, creates the
+backend Kubernetes Secret, applies the backend and frontend manifests, and
+validates the deployed application.
 
-The Ansible playbook is responsible for preparing the server before deployment.
+## Target Environment
 
-## Automated Configuration
+- Google Compute Engine VM
+- Ubuntu 22.04 LTS
+- K3s Kubernetes
+- Frontend NodePort: 30080
+- Backend NodePort: 30081
 
-The playbook performs the following tasks:
+## Automated Tasks
 
-- Updates the Ubuntu package cache
-- Installs required system packages
-- Installs Docker Engine
-- Installs Docker Compose
-- Starts and enables Docker
-- Adds the deployment user to the Docker group
-- Creates the production deployment directory
-- Creates the production `.env` file with secure permissions
-- Verifies Docker and Docker Compose
-- Validates that the server is ready for the CD pipeline
+1. Validate Ubuntu
+2. Update and upgrade Ubuntu packages
+3. Install required packages
+4. Install K3s when missing
+5. Start and enable K3s
+6. Wait for the Kubernetes node to become Ready
+7. Configure kubectl for the SSH user
+8. Copy the Kubernetes manifests
+9. Create or update `backend-secrets`
+10. Apply `backend.yaml`
+11. Apply `frontend.yaml`
+12. Wait for both deployments
+13. Verify NodePorts
+14. Test backend and frontend health
+15. Display final Kubernetes status
 
-## Folder Structure
+## SSH Access
 
-```text
-ansible/
-├── ansible.cfg
-├── inventory.ini.example
-├── site.yml
-├── README.md
-├── group_vars/
-│   ├── all.yml
-│   └── vault.yml.example
-└── templates/
-    └── backend.env.j2
+Generate a personal SSH key:
+
+```bash
+ssh-keygen -t ed25519 -C "weikeat-nextstep-ansible"

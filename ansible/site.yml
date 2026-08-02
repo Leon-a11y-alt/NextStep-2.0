@@ -1,9 +1,17 @@
 ---
-# Author: Lee Wei Keat
-# Role: Infrastructure as Code / Ansible Engineer
-# Purpose: Prepare an Ubuntu AWS EC2 server for the NextStep CD pipeline.
+# Role: Infrastructure as Code
+# Project: NextStep 2.0
+#
+# Purpose:
+# Automate the manual steps documented in k8s/setup-commands.sh:
+# 1. Update Ubuntu
+# 2. Install K3s
+# 3. Configure kubectl access
+# 4. Create the encrypted backend Kubernetes Secret
+# 5. Apply the backend and frontend manifests
+# 6. Validate the deployments and NodePort services
 
-- name: Prepare NextStep AWS EC2 production server
+- name: Configure and deploy NextStep on GCP K3s
   hosts: nextstep_servers
   become: true
 
@@ -11,221 +19,331 @@
     - group_vars/vault.yml
 
   tasks:
-    # -------------------------------------------------------------------------
-    # Base system configuration
-    # -------------------------------------------------------------------------
-    - name: Confirm target operating system is Ubuntu
+    # -----------------------------------------------------------------------
+    # Validate the target server operating system
+    # -----------------------------------------------------------------------
+    - name: Confirm target server uses a supported Linux operating system
       ansible.builtin.assert:
         that:
-          - ansible_distribution == "Ubuntu"
-        fail_msg: "This playbook supports Ubuntu servers only."
-        success_msg: "Ubuntu target confirmed."
+          - ansible_os_family == "Debian"
+        fail_msg: >-
+          This playbook supports Ubuntu or Debian Linux servers.
+          Detected: {{ ansible_distribution }}
+          {{ ansible_distribution_version }}.
+        success_msg: >-
+          Supported Linux server detected:
+          {{ ansible_distribution }}
+          {{ ansible_distribution_version }}.
 
-    - name: Update Ubuntu package cache
+    # -----------------------------------------------------------------------
+    # Update Ubuntu and install prerequisites
+    # -----------------------------------------------------------------------
+    - name: Update Linux package cache
       ansible.builtin.apt:
         update_cache: true
         cache_valid_time: 3600
+
+    - name: Upgrade installed Linux packages
+      ansible.builtin.apt:
+        upgrade: safe
 
     - name: Install required system packages
       ansible.builtin.apt:
         name: "{{ required_packages }}"
         state: present
 
-    # -------------------------------------------------------------------------
-    # Detect the existing Docker installation
-    # -------------------------------------------------------------------------
-    - name: Check whether Docker Engine is available
-      ansible.builtin.command:
-        cmd: docker --version
-      register: existing_docker
-      changed_when: false
-      failed_when: false
+    # -----------------------------------------------------------------------
+    # Install K3s idempotently
+    # -----------------------------------------------------------------------
+    - name: Check whether K3s is already installed
+      ansible.builtin.stat:
+        path: "{{ k3s_binary_path }}"
+      register: k3s_binary
 
-    - name: Check whether Docker Compose is available
-      ansible.builtin.command:
-        cmd: docker compose version
-      register: existing_compose
-      changed_when: false
-      failed_when: false
-
-    # -------------------------------------------------------------------------
-    # Remove packages that conflict with Docker official packages
-    # Runs only when Docker or Compose is missing.
-    # -------------------------------------------------------------------------
-    - name: Remove conflicting Ubuntu Docker packages
-      ansible.builtin.apt:
-        name:
-          - docker.io
-          - docker-doc
-          - docker-compose
-          - docker-compose-v2
-          - podman-docker
-          - containerd
-          - runc
-        state: absent
-      when: existing_docker.rc != 0 or existing_compose.rc != 0
-
-    # -------------------------------------------------------------------------
-    # Configure Docker official APT repository
-    # -------------------------------------------------------------------------
-    - name: Create Docker APT keyring directory
-      ansible.builtin.file:
-        path: /etc/apt/keyrings
-        state: directory
+    - name: Download official K3s installation script
+      ansible.builtin.get_url:
+        url: https://get.k3s.io
+        dest: "{{ k3s_install_script_path }}"
         owner: root
         group: root
         mode: "0755"
-      when: existing_docker.rc != 0 or existing_compose.rc != 0
+      when: not k3s_binary.stat.exists
 
-    - name: Download Docker repository signing key
-      ansible.builtin.get_url:
-        url: https://download.docker.com/linux/ubuntu/gpg
-        dest: /etc/apt/keyrings/docker.asc
-        owner: root
-        group: root
-        mode: "0644"
-      when: existing_docker.rc != 0 or existing_compose.rc != 0
+    - name: Install K3s when it is missing
+      ansible.builtin.command:
+        cmd: "{{ k3s_install_script_path }}"
+        creates: "{{ k3s_binary_path }}"
+      when: not k3s_binary.stat.exists
 
-    - name: Determine Docker repository architecture
-      ansible.builtin.set_fact:
-        docker_apt_architecture: >-
-          {{
-            'amd64'
-            if ansible_architecture == 'x86_64'
-            else 'arm64'
-            if ansible_architecture in ['aarch64', 'arm64']
-            else ansible_architecture
-          }}
-      when: existing_docker.rc != 0 or existing_compose.rc != 0
-
-    - name: Add Docker official APT repository
-      ansible.builtin.apt_repository:
-        repo: >-
-          deb [arch={{ docker_apt_architecture }}
-          signed-by=/etc/apt/keyrings/docker.asc]
-          https://download.docker.com/linux/ubuntu
-          {{ ansible_distribution_release }} stable
-        filename: docker
-        state: present
-      when: existing_docker.rc != 0 or existing_compose.rc != 0
-
-    - name: Update package cache after adding Docker repository
-      ansible.builtin.apt:
-        update_cache: true
-      when: existing_docker.rc != 0 or existing_compose.rc != 0
-
-    - name: Install Docker Engine and Docker Compose plugin
-      ansible.builtin.apt:
-        name:
-          - docker-ce
-          - docker-ce-cli
-          - containerd.io
-          - docker-buildx-plugin
-          - docker-compose-plugin
-        state: present
-      when: existing_docker.rc != 0 or existing_compose.rc != 0
-
-    # -------------------------------------------------------------------------
-    # Docker service and permissions
-    # -------------------------------------------------------------------------
-    - name: Start and enable Docker service
+    - name: Start and enable K3s service
       ansible.builtin.systemd:
-        name: "{{ docker_service_name }}"
+        name: "{{ k3s_service_name }}"
         state: started
         enabled: true
 
-    - name: Add deployment user to Docker group
-      ansible.builtin.user:
-        name: "{{ deployment_user }}"
-        groups: docker
-        append: true
+    # -----------------------------------------------------------------------
+    # Wait for Kubernetes to become ready
+    # -----------------------------------------------------------------------
+    - name: Wait for Kubernetes API server
+      ansible.builtin.command:
+        cmd: "{{ k3s_binary_path }} kubectl get nodes"
+      register: kubernetes_api_check
+      changed_when: false
+      retries: 30
+      delay: 5
+      until: kubernetes_api_check.rc == 0
 
-    # -------------------------------------------------------------------------
-    # Prepare the deployment location used by GitHub Actions CD
-    # -------------------------------------------------------------------------
-    - name: Create NextStep deployment directory
+    - name: Wait for K3s node to report Ready
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail &&
+          {{ k3s_binary_path }} kubectl get nodes
+          --no-headers |
+          awk '{print $2}' |
+          grep -q '^Ready$'
+        executable: /bin/bash
+      register: node_ready
+      changed_when: false
+      retries: 30
+      delay: 5
+      until: node_ready.rc == 0
+
+    # -----------------------------------------------------------------------
+    # Configure kubectl for the GCP SSH user
+    # -----------------------------------------------------------------------
+    - name: Create kubeconfig directory for GCP SSH user
       ansible.builtin.file:
-        path: "{{ deployment_path }}"
+        path: "{{ user_kube_directory }}"
         state: directory
-        owner: "{{ deployment_user }}"
-        group: "{{ deployment_group }}"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0700"
+
+    - name: Copy K3s kubeconfig for GCP SSH user
+      ansible.builtin.copy:
+        src: "{{ k3s_kubeconfig_path }}"
+        dest: "{{ user_kubeconfig_path }}"
+        remote_src: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0600"
+
+    - name: Configure permanent KUBECONFIG environment variable
+      ansible.builtin.lineinfile:
+        path: "{{ remote_user_home }}/.bashrc"
+        line: 'export KUBECONFIG="$HOME/.kube/config"'
+        state: present
+        create: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0644"
+
+    # -----------------------------------------------------------------------
+    # Copy Kubernetes manifests to the VM
+    # -----------------------------------------------------------------------
+    - name: Create remote Kubernetes manifest directory
+      ansible.builtin.file:
+        path: "{{ remote_manifest_directory }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
         mode: "0755"
 
-    - name: Create production environment file
-      ansible.builtin.template:
-        src: backend.env.j2
-        dest: "{{ environment_file_path }}"
-        owner: "{{ deployment_user }}"
-        group: "{{ deployment_group }}"
-        mode: "0600"
+    - name: Copy backend Kubernetes manifest
+      ansible.builtin.copy:
+        src: files/backend.yaml
+        dest: "{{ remote_backend_manifest }}"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0644"
+
+    - name: Copy frontend Kubernetes manifest
+      ansible.builtin.copy:
+        src: files/frontend.yaml
+        dest: "{{ remote_frontend_manifest }}"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0644"
+
+    # -----------------------------------------------------------------------
+    # Create backend Kubernetes Secret using encrypted Vault data
+    # -----------------------------------------------------------------------
+    - name: Create or update backend Kubernetes Secret
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+
+          {{ k3s_binary_path }} kubectl create secret generic \
+            {{ backend_secret_name }} \
+            --namespace {{ kubernetes_namespace }} \
+            --from-literal=DATABASE_URL="$DATABASE_URL" \
+            --dry-run=client \
+            -o yaml |
+          {{ k3s_binary_path }} kubectl apply -f -
+        executable: /bin/bash
+      environment:
+        DATABASE_URL: "{{ vault_database_url }}"
+      register: backend_secret_result
+      changed_when: >-
+        'created' in backend_secret_result.stdout or
+        'configured' in backend_secret_result.stdout
       no_log: true
 
-    # -------------------------------------------------------------------------
-    # Verify Docker and Docker Compose
-    # -------------------------------------------------------------------------
-    - name: Check installed Docker version
+    # -----------------------------------------------------------------------
+    # Apply backend and frontend resources
+    # -----------------------------------------------------------------------
+    - name: Apply backend Kubernetes manifest
       ansible.builtin.command:
-        cmd: docker --version
-      register: docker_version
+        cmd: >-
+          {{ k3s_binary_path }} kubectl apply
+          --namespace {{ kubernetes_namespace }}
+          -f {{ remote_backend_manifest }}
+      register: backend_apply
+      changed_when: >-
+        'created' in backend_apply.stdout or
+        'configured' in backend_apply.stdout
+
+    - name: Apply frontend Kubernetes manifest
+      ansible.builtin.command:
+        cmd: >-
+          {{ k3s_binary_path }} kubectl apply
+          --namespace {{ kubernetes_namespace }}
+          -f {{ remote_frontend_manifest }}
+      register: frontend_apply
+      changed_when: >-
+        'created' in frontend_apply.stdout or
+        'configured' in frontend_apply.stdout
+
+    # -----------------------------------------------------------------------
+    # Wait for deployments
+    # -----------------------------------------------------------------------
+    - name: Wait for backend deployment rollout
+      ansible.builtin.command:
+        cmd: >-
+          {{ k3s_binary_path }} kubectl rollout status
+          deployment/{{ backend_deployment_name }}
+          --namespace {{ kubernetes_namespace }}
+          --timeout=180s
       changed_when: false
 
-    - name: Check installed Docker Compose version
+    - name: Wait for frontend deployment rollout
       ansible.builtin.command:
-        cmd: docker compose version
-      register: compose_version
+        cmd: >-
+          {{ k3s_binary_path }} kubectl rollout status
+          deployment/{{ frontend_deployment_name }}
+          --namespace {{ kubernetes_namespace }}
+          --timeout=180s
       changed_when: false
 
-    - name: Gather service information
-      ansible.builtin.service_facts:
+    # -----------------------------------------------------------------------
+    # Validate Kubernetes service NodePorts
+    # -----------------------------------------------------------------------
+    - name: Retrieve backend service NodePort
+      ansible.builtin.command:
+        cmd: >-
+          {{ k3s_binary_path }} kubectl get service
+          {{ backend_service_name }}
+          --namespace {{ kubernetes_namespace }}
+          -o jsonpath='{.spec.ports[0].nodePort}'
+      register: backend_service_node_port
+      changed_when: false
 
-    - name: Confirm Docker service is running
+    - name: Retrieve frontend service NodePort
+      ansible.builtin.command:
+        cmd: >-
+          {{ k3s_binary_path }} kubectl get service
+          {{ frontend_service_name }}
+          --namespace {{ kubernetes_namespace }}
+          -o jsonpath='{.spec.ports[0].nodePort}'
+      register: frontend_service_node_port
+      changed_when: false
+
+    - name: Confirm expected NodePort values
       ansible.builtin.assert:
         that:
-          - "'docker.service' in ansible_facts.services"
-          - ansible_facts.services['docker.service'].state == "running"
-        fail_msg: "Docker service is missing or not running."
-        success_msg: "Docker service is installed and running."
+          - backend_service_node_port.stdout | int == backend_node_port
+          - frontend_service_node_port.stdout | int == frontend_node_port
+        fail_msg: >-
+          Unexpected NodePort configuration.
+          Expected backend {{ backend_node_port }}
+          and frontend {{ frontend_node_port }}.
+        success_msg: >-
+          NodePorts are configured correctly:
+          backend {{ backend_node_port }},
+          frontend {{ frontend_node_port }}.
 
-    # -------------------------------------------------------------------------
-    # Verify deployment configuration
-    # -------------------------------------------------------------------------
-    - name: Check deployment directory
-      ansible.builtin.stat:
-        path: "{{ deployment_path }}"
-      register: deployment_directory
+    # -----------------------------------------------------------------------
+    # Check application health through NodePort
+    # -----------------------------------------------------------------------
+    - name: Wait for backend health endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ backend_node_port }}/api/health"
+        method: GET
+        status_code: 200
+        return_content: true
+      register: backend_health
+      retries: 20
+      delay: 5
+      until: backend_health.status == 200
+      changed_when: false
 
-    - name: Confirm deployment directory exists
-      ansible.builtin.assert:
-        that:
-          - deployment_directory.stat.exists
-          - deployment_directory.stat.isdir
-          - deployment_directory.stat.pw_name == deployment_user
-        fail_msg: "Deployment directory is missing or has incorrect ownership."
-        success_msg: "Deployment directory is ready for the CD pipeline."
+    - name: Wait for frontend HTTP response
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ frontend_node_port }}"
+        method: GET
+        status_code: 200
+        return_content: false
+      register: frontend_health
+      retries: 20
+      delay: 5
+      until: frontend_health.status == 200
+      changed_when: false
 
-    - name: Check production environment file
-      ansible.builtin.stat:
-        path: "{{ environment_file_path }}"
-      register: environment_file
+    # -----------------------------------------------------------------------
+    # Retrieve final status
+    # -----------------------------------------------------------------------
+    - name: Retrieve Kubernetes node status
+      ansible.builtin.command:
+        cmd: "{{ k3s_binary_path }} kubectl get nodes -o wide"
+      register: node_status
+      changed_when: false
 
-    - name: Confirm environment file exists securely
-      ansible.builtin.assert:
-        that:
-          - environment_file.stat.exists
-          - environment_file.stat.isreg
-          - environment_file.stat.mode == "0600"
-        fail_msg: "Production environment file is missing or has unsafe permissions."
-        success_msg: "Production environment file exists with secure permissions."
+    - name: Retrieve Kubernetes pod status
+      ansible.builtin.command:
+        cmd: >-
+          {{ k3s_binary_path }} kubectl get pods
+          --namespace {{ kubernetes_namespace }}
+          -o wide
+      register: pod_status
+      changed_when: false
 
-    # -------------------------------------------------------------------------
-    # Final result
-    # -------------------------------------------------------------------------
-    - name: Display server preparation summary
+    - name: Retrieve Kubernetes service status
+      ansible.builtin.command:
+        cmd: >-
+          {{ k3s_binary_path }} kubectl get services
+          --namespace {{ kubernetes_namespace }}
+      register: service_status
+      changed_when: false
+
+    - name: Display Kubernetes node status
+      ansible.builtin.debug:
+        msg: "{{ node_status.stdout_lines }}"
+
+    - name: Display Kubernetes pod status
+      ansible.builtin.debug:
+        msg: "{{ pod_status.stdout_lines }}"
+
+    - name: Display Kubernetes service status
+      ansible.builtin.debug:
+        msg: "{{ service_status.stdout_lines }}"
+
+    - name: Display final deployment summary
       ansible.builtin.debug:
         msg:
-          - "NextStep EC2 preparation completed successfully."
-          - "Docker: {{ docker_version.stdout }}"
-          - "Docker Compose: {{ compose_version.stdout }}"
-          - "Deployment user: {{ deployment_user }}"
-          - "Deployment path: {{ deployment_path }}"
-          - "The EC2 server is ready for the GitHub Actions CD pipeline."
+          - "NextStep GCP K3s deployment completed successfully."
+          - "Backend deployment: {{ backend_deployment_name }}"
+          - "Frontend deployment: {{ frontend_deployment_name }}"
+          - "Backend URL: http://{{ ansible_host }}:{{ backend_node_port }}"
+          - "Frontend URL: http://{{ ansible_host }}:{{ frontend_node_port }}"
+          - "Backend health check returned HTTP {{ backend_health.status }}."
+          - "Frontend returned HTTP {{ frontend_health.status }}."
