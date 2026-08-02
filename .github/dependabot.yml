@@ -1,0 +1,28 @@
+# Automated dependency updates. Dependabot opens a PR when a package or action
+# has a new version; our CI pipeline then tests that PR automatically, so we
+# only merge upgrades that are already proven green.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(backend)"
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(frontend)"
+
+  # Keeps the actions used inside the workflows themselves up to date.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"

@@ -133,6 +133,47 @@ export const FocusAPI = {
 // AI study help: backend proxies the n8n webhook (Cisco NetAcad lookup) and caches results.
 export const HelpAPI = {
   recommend: (query) => api.post("/api/help/recommend", { query }),
+
+  // The live "thinking process" version. The backend writes one JSON object
+  // per line as it works (cache check -> AI -> keyword fallback); we read the
+  // stream and call onStep({label, detail, t}) for each line, so the page can
+  // show the pipeline thinking in real time. Resolves with the same results
+  // array recommend() returns.
+  recommendStream: async (query, onStep) => {
+    const res = await fetch(`${API_URL}/api/help/recommend-stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => null);
+      throw new Error((data && data.error) || `Request failed (${res.status})`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let results = null;
+
+    // Chunks can split mid-line, so buffer until each newline completes a JSON object.
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line) continue;
+        const event = JSON.parse(line);
+        if (event.type === "step" && onStep) onStep(event);
+        else if (event.type === "result") results = event.results;
+        else if (event.type === "error") throw new Error(event.error);
+      }
+    }
+    if (!results) throw new Error("The stream ended without an answer.");
+    return results;
+  },
 };
 
 // Gamification: level, XP, streak, badges, growth journey + AI motivation.

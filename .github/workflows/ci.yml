@@ -1,0 +1,234 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# NextStep — Continuous Integration (CI)
+#
+# WHAT THIS DOES
+#   Every push and every pull request is automatically verified by GitHub
+#   Actions before anyone merges it. Four stages run in this order:
+#
+#     1. quality        — repo hygiene: no committed secrets, no node_modules
+#     2. backend-test   — spin up a real PostgreSQL, seed it, run the API tests,
+#                         then boot the server and hit /api/health (smoke test)
+#     3. frontend-build — production `next build` must compile
+#     4. docker-build   — both Dockerfiles must build (needs 2 + 3 to pass)
+#
+#   Stages 2 and 3 run in PARALLEL (they don't depend on each other), so a full
+#   run stays fast. Stage 4 only starts once both have gone green.
+#
+#   If any stage fails, the commit/PR is marked ✗ on GitHub and the pipeline
+#   stops — so broken code never reaches `main`.
+# ─────────────────────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  push:
+    branches: [main, dev, "feature/**"]
+  pull_request:
+    branches: [main, dev]
+  # Lets us press "Run workflow" by hand in the Actions tab (useful for a demo).
+  workflow_dispatch:
+  # Lets other workflows reuse this one (see cd.yml).
+  workflow_call:
+
+# If you push twice quickly, cancel the older run instead of paying for both.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # 1. QUALITY GATE — cheap checks that fail fast
+  # ───────────────────────────────────────────────────────────────────────────
+  quality:
+    name: Quality checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: No .env files committed
+        run: |
+          if git ls-files | grep -E '(^|/)\.env(\.local)?$'; then
+            echo "::error::A real .env file is committed. Remove it — only .env.example belongs in git."
+            exit 1
+          fi
+          echo "OK: no .env files tracked by git."
+
+      - name: No node_modules or build output committed
+        run: |
+          if git ls-files | grep -E '(^|/)(node_modules|\.next)/'; then
+            echo "::error::node_modules or .next is committed. Check .gitignore."
+            exit 1
+          fi
+          echo "OK: repository is clean."
+
+      - name: Lockfiles present (required for reproducible installs)
+        run: |
+          for f in backend/package-lock.json frontend/package-lock.json; do
+            test -f "$f" || { echo "::error::$f is missing"; exit 1; }
+          done
+          echo "OK: both lockfiles present."
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 2. BACKEND TESTS — against a real, disposable PostgreSQL database
+  # ───────────────────────────────────────────────────────────────────────────
+  backend-test:
+    name: Backend tests (PostgreSQL)
+    runs-on: ubuntu-latest
+
+    # A throwaway Postgres container that lives only for this job. This is why
+    # the pipeline can run the real API tests without touching the team's
+    # Supabase database — CI gets its own clean copy every single time.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: nextstep_test
+        ports:
+          - 5432:5432
+        # Don't start our steps until Postgres says it is ready to accept
+        # connections, otherwise db:init would race it and fail.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextstep_test
+      DATABASE_SSL: disable # the CI container has no SSL (Supabase does)
+      PORT: "4000"
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      # `npm ci` (not `npm install`) — installs exactly what the lockfile says,
+      # so CI builds the same dependency tree every run.
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Create the schema and seed data
+        working-directory: backend
+        run: npm run db:init
+
+      - name: Run the API test suite
+        working-directory: backend
+        run: npm test
+
+      # Smoke test: a passing unit test doesn't prove the app actually boots.
+      - name: Smoke test — the API starts and answers /api/health
+        working-directory: backend
+        run: |
+          node server.js &
+          SERVER_PID=$!
+          for i in $(seq 1 15); do
+            if curl -fsS http://localhost:4000/api/health > /tmp/health.json; then
+              echo "Health response: $(cat /tmp/health.json)"
+              kill $SERVER_PID
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::The API never became healthy."
+          kill $SERVER_PID || true
+          exit 1
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 3. FRONTEND BUILD — the Next.js production build must compile
+  # ───────────────────────────────────────────────────────────────────────────
+  frontend-build:
+    name: Frontend build (Next.js)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build the production bundle
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:4000
+        run: npm run build
+
+      # Keeps the compiled output attached to the run so you can download and
+      # inspect exactly what this commit produced.
+      - name: Upload the build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build-${{ github.sha }}
+          path: frontend/.next/standalone
+          retention-days: 7
+          if-no-files-found: error
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 4. DOCKER IMAGE BUILD — proves both containers still build
+  #    (build only, no push — publishing happens in the CD pipeline)
+  # ───────────────────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    needs: [backend-test, frontend-build]
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          tags: nextstep-backend:ci
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build the frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          tags: nextstep-frontend:ci
+          build-args: |
+            NEXT_PUBLIC_API_URL=http://localhost:4000
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Pipeline summary
+        run: |
+          {
+            echo "### CI passed :white_check_mark:"
+            echo ""
+            echo "| Stage | Result |"
+            echo "| --- | --- |"
+            echo "| Quality checks | passed |"
+            echo "| Backend tests (PostgreSQL) | passed |"
+            echo "| Frontend build | passed |"
+            echo "| Docker images | built |"
+            echo ""
+            echo "Commit \`${GITHUB_SHA::7}\` on \`${GITHUB_REF_NAME}\` is safe to merge."
+          } >> "$GITHUB_STEP_SUMMARY"

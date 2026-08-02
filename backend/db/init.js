@@ -19,7 +19,9 @@ async function main() {
 
   const client = new Client({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }, // Supabase requires SSL
+    // Supabase requires SSL; a plain Postgres container (CI / local Docker)
+    // has none, so DATABASE_SSL=disable turns it off there.
+    ssl: process.env.DATABASE_SSL === "disable" ? false : { rejectUnauthorized: false },
   });
 
   console.log("Connecting to Supabase ...");
