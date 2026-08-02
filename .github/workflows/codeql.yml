@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# NextStep — CodeQL static analysis (SAST)
+#
+# WHAT THIS DOES
+#   Analyses the JavaScript we wrote ourselves, looking for security bugs in the
+#   code rather than in our dependencies: SQL injection, unsafe data flow into a
+#   query or a response, path traversal, hardcoded credentials, weak randomness.
+#
+# HOW THIS DIFFERS FROM THE TRIVY STAGES IN ci.yml
+#   Trivy answers "are any of the packages or images we PULL known to be
+#   vulnerable?" — it reads lockfiles and container layers and matches them
+#   against a CVE database. It never looks at our own source.
+#
+#   CodeQL answers "did WE write a bug?" — it builds a queryable database of the
+#   codebase and traces how untrusted input flows through it. A brand-new
+#   injection flaw in a controller has no CVE, so Trivy cannot see it; CodeQL
+#   can. The two are complementary layers, not duplicates.
+#
+#   Note: ci.yml already uses `github/codeql-action/upload-sarif`. That is only
+#   the UPLOADER — it publishes Trivy's findings to the Security tab. The
+#   analyser itself (`init` + `analyze`) is what this file adds.
+#
+# RESULTS
+#   Findings land in the repository's Security tab under "Code scanning", tagged
+#   with the category below so they sit alongside — not on top of — the Trivy
+#   results. On a pull request, CodeQL annotates the introduced lines directly.
+#
+#   To make this BLOCK a merge rather than just report:
+#     Settings → Code security → Code scanning → Protection rules
+#     → require the "CodeQL" check to pass, then add it to branch protection.
+# ─────────────────────────────────────────────────────────────────────────────
+name: CodeQL
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  # A weekly re-scan. The code has not changed, but CodeQL's query packs have —
+  # this is how a flaw nobody knew to look for last month gets found this month.
+  schedule:
+    - cron: "0 3 * * 1" # Mondays, 03:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: CodeQL analysis (JavaScript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+      actions: read
+      security-events: write # required to publish results to the Security tab
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      # JavaScript and TypeScript are interpreted, so there is nothing to
+      # compile — CodeQL can build its database straight from the source. No
+      # autobuild step is needed (that is only for compiled languages).
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # security-extended runs the standard security suite plus lower-severity
+          # and experimental security queries. Slower and noisier than the default,
+          # but on a project this size it finds more worth triaging. Drop the line
+          # to fall back to the default suite if the alert count is unmanageable.
+          queries: security-extended
+
+      - name: Run the analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          # Keeps these results in their own bucket in the Security tab, so they
+          # never overwrite the SARIF the Trivy stages upload.
+          category: "/language:javascript-typescript"
