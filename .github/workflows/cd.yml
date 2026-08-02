@@ -111,13 +111,21 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ───────────────────────────────────────────────────────────────────────────
-  # 3. DEPLOY — release the published images to the server
+  # 3. DEPLOY — roll the published images out to the k3s cluster
   #
-  #    This job is a no-op until the deployment secrets exist, so the pipeline
-  #    stays green while the hosting decision is still open. Add the four
-  #    secrets below (Settings → Secrets and variables → Actions) and the same
-  #    job starts deploying for real — no workflow edit needed.
-  #      DEPLOY_HOST  DEPLOY_USER  DEPLOY_SSH_KEY  DEPLOY_PATH
+  #    The app runs on Kubernetes (k3s on a GCP VM — manifests in k8s/). This
+  #    job SSHes to that VM, applies the committed manifests, then pins both
+  #    Deployments to the images published for THIS commit. kubectl performs a
+  #    rolling update, so a deploy has zero downtime — and a rollback is just
+  #    re-running this job from an older commit (the tag is the commit SHA).
+  #
+  #    It is a no-op until the secrets exist, so the pipeline stays green
+  #    while the cluster credentials are still being set up. Add three secrets
+  #    (Settings → Secrets and variables → Actions) and this job deploys for
+  #    real — no workflow edit needed:
+  #      DEPLOY_HOST      the VM's public IP (e.g. 34.124.158.162)
+  #      DEPLOY_USER      the SSH username on that VM
+  #      DEPLOY_SSH_KEY   a private key whose public half is on the VM
   # ───────────────────────────────────────────────────────────────────────────
   deploy:
     name: Deploy to production
@@ -145,24 +153,25 @@ jobs:
           {
             echo "### Deploy skipped :pause_button:"
             echo ""
-            echo "The images for \`${GITHUB_SHA::7}\` are published and ready, but no"
-            echo "deployment target is configured yet."
+            echo "The images for \`${GITHUB_SHA::7}\` are published and ready, but the"
+            echo "cluster's SSH secrets are not configured yet."
             echo ""
             echo "To go live, add these repository secrets:"
-            echo "\`DEPLOY_HOST\`, \`DEPLOY_USER\`, \`DEPLOY_SSH_KEY\`, \`DEPLOY_PATH\`."
+            echo "\`DEPLOY_HOST\`, \`DEPLOY_USER\`, \`DEPLOY_SSH_KEY\`."
           } >> "$GITHUB_STEP_SUMMARY"
           echo "No deployment target configured — skipping (this is not a failure)."
 
-      # Copies docker-compose.prod.yml to the server, then pulls the images
-      # tagged with THIS commit and restarts the stack. Because the tag is the
-      # commit SHA, a rollback is just re-running this job on an older commit.
-      - name: Deploy over SSH
+      # k3s ships kubectl on the VM itself, so deploying = SSH in, apply the
+      # manifests from THIS commit, and point both Deployments at the images
+      # published for THIS commit. `rollout status` makes the job wait until
+      # the new pods are actually Ready — a broken image fails the run instead
+      # of silently serving the old version.
+      - name: Deploy to the k3s cluster over SSH
         if: steps.check.outputs.ready == 'true'
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           HOST: ${{ secrets.DEPLOY_HOST }}
           USER: ${{ secrets.DEPLOY_USER }}
-          REMOTE_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
@@ -172,18 +181,22 @@ jobs:
 
           REPO=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
 
-          scp -i ~/.ssh/deploy_key docker-compose.prod.yml \
-            "$USER@$HOST:$REMOTE_PATH/docker-compose.prod.yml"
+          # The manifests as committed (teammates' work, applied verbatim).
+          scp -i ~/.ssh/deploy_key k8s/backend.yaml k8s/frontend.yaml \
+            "$USER@$HOST:/tmp/"
 
           ssh -i ~/.ssh/deploy_key "$USER@$HOST" bash -s <<EOF
             set -euo pipefail
-            cd "$REMOTE_PATH"
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            export IMAGE_REPO="ghcr.io/$REPO"
-            export IMAGE_TAG="${GITHUB_SHA}"
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d
-            docker image prune -f
+            kubectl apply -f /tmp/backend.yaml -f /tmp/frontend.yaml
+            # Pin both Deployments to THIS commit's images — this is the
+            # actual release step, and what makes rollbacks a one-liner.
+            kubectl set image deployment/backend \
+              backend=ghcr.io/$REPO/backend:${GITHUB_SHA}
+            kubectl set image deployment/frontend \
+              frontend=ghcr.io/$REPO/frontend:${GITHUB_SHA}
+            kubectl rollout status deployment/backend  --timeout=180s
+            kubectl rollout status deployment/frontend --timeout=180s
+            kubectl get pods -o wide
           EOF
 
       - name: Verify the deployment is healthy
