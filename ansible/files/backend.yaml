@@ -1,0 +1,59 @@
+# backend.yaml — NextStep backend (Node/Express API)
+# Deploys the backend image from GHCR and exposes it via NodePort 30081.
+# The backend reads DATABASE_URL from the "backend-secrets" Secret,
+# which must be created before applying this file:
+#   kubectl create secret generic backend-secrets \
+#     --from-literal=DATABASE_URL='<supabase-connection-string>'
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 1                      # single replica (fits the 2GB VM); can raise if RAM allows
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/lauzhengxian/nextstep-backend:latest
+          ports:
+            - containerPort: 4000  # the port the Express app listens on
+          envFrom:
+            - secretRef:
+                name: backend-secrets   # injects DATABASE_URL (and any other keys) as env vars
+          resources:
+            requests:                # guaranteed minimum
+              cpu: 100m
+              memory: 128Mi
+            limits:                  # hard ceiling
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:            # don't send traffic until /api/health responds
+            httpGet:
+              path: /api/health
+              port: 4000
+            initialDelaySeconds: 5
+          livenessProbe:             # restart the pod if it stops responding
+            httpGet:
+              path: /api/health
+              port: 4000
+            initialDelaySeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  type: NodePort                     # exposes the backend outside the cluster
+  selector:
+    app: backend
+  ports:
+    - port: 4000
+      targetPort: 4000
+      nodePort: 30081                # reachable at http://<VM-public-IP>:30081

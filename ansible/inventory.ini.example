@@ -1,0 +1,5 @@
+# Copy this file to inventory.ini and replace the placeholders.
+# Never place private-key contents in this file.
+
+[nextstep_servers]
+nextstep_gcp ansible_host=GCP_PUBLIC_IP ansible_user=YOUR_GCP_SSH_USERNAME ansible_ssh_private_key_file=PATH_TO_PRIVATE_KEY
