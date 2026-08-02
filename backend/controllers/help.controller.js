@@ -214,12 +214,14 @@ function arrayFromString(value) {
   }
 }
 
-// Hunt for the picks array anywhere in what n8n sent. We can't rely on one
+// Hunt for the picks array anywhere in what the AI sent. We can't rely on one
 // field name: an LLM Chain says `text`, other nodes say `output` or `content`,
-// and a "Respond With: JSON" node may nest the lot. So walk the whole payload
-// and take the first array that actually looks like picks.
+// a "Respond With: JSON" node may nest the lot, and Gemini's own envelope is
+// candidates -> content -> parts -> text (5 levels deep before the string we
+// actually need). So walk the whole payload and take the first array that
+// actually looks like picks.
 function deepFindPicks(value, depth = 0) {
-  if (value == null || depth > 5) return null;
+  if (value == null || depth > 8) return null;
 
   if (Array.isArray(value)) {
     if (value.some((v) => v && typeof v === "object" && "id" in v)) return value;
