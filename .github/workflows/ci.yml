@@ -344,7 +344,7 @@ jobs:
       # `load: true` puts the image into the local Docker daemon so Trivy can
       # scan the exact artifact this commit produces.
       - name: Build the backend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./backend
           push: false
@@ -354,7 +354,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=backend
 
       - name: Build the frontend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./frontend
           push: false
