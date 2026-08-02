@@ -272,6 +272,76 @@ function mergePicks(picks, courses) {
   return out;
 }
 
+// The instruction we give the model. It ranks OUR catalogue and returns ids
+// only — never course names, prices or links — so it cannot invent a course.
+function rankingPrompt(query, lean) {
+  return [
+    `The student said: ${query}`,
+    "",
+    "Only recommend from this catalogue:",
+    JSON.stringify(lean),
+    "",
+    "Pick the 3-4 courses that best match what the student is struggling with.",
+    'Return ONLY a JSON array, no markdown, no explanation:',
+    '[{"id": <id from the catalogue>, "match": <0-100>, "reason": "<one sentence to the student saying why this fits>"}]',
+    "",
+    "Rules:",
+    "- Only use ids that appear in the catalogue above.",
+    "- Best first; the best gets the highest match.",
+    "- If nothing fits well, return the 2 most beginner-friendly ones with a lower match.",
+  ].join("\n");
+}
+
+// Ask Google Gemini directly. This is the preferred path: one less moving part
+// than routing through n8n, and nothing to expire. Same contract — the model
+// returns [{id, match, reason}] and every fact on the card still comes from
+// our own database. Returns null on any problem so the caller falls back.
+async function askGemini(query, courses, lean, tell) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return null;
+
+  const model = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), AI_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: rankingPrompt(query, lean) }] }],
+          generationConfig: { temperature: 0.2 },
+        }),
+        signal: abort.signal,
+      }
+    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      tell(`Gemini replied ${res.status}${body ? " — " + body.replace(/\s+/g, " ").slice(0, 120) : ""}`);
+      return null;
+    }
+    const data = await res.json();
+    const picks = parseAiPicks(data);      // walks the whole response for the array
+    if (!picks) {
+      tell("Gemini's answer wasn't the expected [{id,match,reason}] shape");
+      return null;
+    }
+    const results = mergePicks(picks, courses);
+    if (!results.length) {
+      tell("Gemini picked no course we actually have (all ids were unknown)");
+      return null;
+    }
+    return results;
+  } catch (err) {
+    const why = err.name === "AbortError" ? `no reply in ${AI_TIMEOUT_MS}ms` : err.message;
+    tell(`Gemini unavailable (${why})`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Ask the n8n workflow to rank the catalogue. Returns null on any problem
 // (not configured, timeout, HTTP error, unparseable answer, no usable ids).
 //
@@ -280,19 +350,20 @@ function mergePicks(picks, courses) {
 // only appearing in the server console.
 async function askAi(query, courses, notify) {
   const tell = (msg) => { console.log("  " + msg); if (notify) notify(msg); };
+
+  // Send only what the model needs to RANK: the id, title, level and keywords.
+  const lean = courses.map((c) => ({ id: c.id, name: c.name, level: c.level, topics: c.topics }));
+
+  // 1st choice: straight to Gemini. No workflow host in between.
+  const direct = await askGemini(query, courses, lean, tell);
+  if (direct) return direct;
+
+  // 2nd choice: an n8n workflow, if one is configured.
   const url = process.env.N8N_WEBHOOK_URL;
   if (!url) return null;
 
-  // Send only what the model needs to RANK: the id to pick, the title, the
-  // level, and the keywords. Descriptions nearly double the prompt and the
-  // model never has to repeat them back — the reply is just ids. A smaller
-  // prompt is a faster reply, which matters on Gemini's free tier.
-  const lean = courses.map((c) => ({
-    id: c.id,
-    name: c.name,
-    level: c.level,
-    topics: c.topics,
-  }));
+  // (`lean` is built once above and reused here — descriptions would nearly
+  // double the prompt, and the model only ever replies with ids.)
 
   // Without a timeout a hanging workflow would hang the page mid-demo.
   const abort = new AbortController();
@@ -430,20 +501,21 @@ async function recommendStream(req, res) {
 
     // 2) AI
     let results = null;
-    if (process.env.N8N_WEBHOOK_URL) {
-      step("Asking the AI", `Sending your question + our ${courses.length}-course NetAcad catalogue to Gemini (via n8n). It returns only course ids — every fact on a card comes from our own database`);
+    const engine = process.env.GEMINI_API_KEY ? "Gemini" : (process.env.N8N_WEBHOOK_URL ? "an n8n workflow" : null);
+    if (engine) {
+      step("Asking the AI", `Sending your question + our ${courses.length}-course NetAcad catalogue to ${engine}. It returns only course ids — every fact on a card comes from our own database`);
       const tAi = Date.now();
       results = await askAi(query, courses, (why) => step("AI problem", why));
       if (results) {
         // Same finishing touches the plain endpoint applies: weak-answer flag
         // + the per-course "why exactly" breakdown for each card's dropdown.
         results = withExplanations(tagWeak(results), courses, query);
-        step("AI answered", `Gemini ranked ${results.length} course(s) in ${((Date.now() - tAi) / 1000).toFixed(1)}s — its ids matched real rows in our catalogue`);
+        step("AI answered", `Ranked ${results.length} course(s) in ${((Date.now() - tAi) / 1000).toFixed(1)}s — every id matched a real row in our catalogue`);
       } else {
         step("Switching engines", "No usable AI answer — falling back to keyword matching so you still get a result");
       }
     } else {
-      step("AI not configured", "N8N_WEBHOOK_URL is empty — using keyword matching");
+      step("AI not configured", "No GEMINI_API_KEY (or n8n webhook) set — using keyword matching");
     }
 
     // 3) Keywords
