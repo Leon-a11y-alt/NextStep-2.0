@@ -201,21 +201,27 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+      - name: Check out the gate script
+        uses: actions/checkout@v4
+
       # THE RELEASE GATE.
       - name: Gate — no fixable CRITICAL may reach production
         run: |
           set -euo pipefail
+          FAILED=0
           for svc in backend frontend; do
             IMG="ghcr.io/${{ steps.names.outputs.repo }}/$svc:${GITHUB_SHA}"
-            echo "Gating $IMG …"
             trivy image "$IMG" \
               --scanners vuln \
               --severity CRITICAL \
               --ignore-unfixed \
+              --format json \
               --no-progress \
-              --exit-code 1
+              --output "gate-$svc.json" \
+              --exit-code 0
+            node .github/scripts/trivy-gate.mjs "gate-$svc.json" "published $svc image" || FAILED=1
           done
-          echo "OK: both published images cleared the CRITICAL gate."
+          exit $FAILED
 
       - name: Scan summary
         if: always()

@@ -301,6 +301,10 @@ jobs:
           if-no-files-found: ignore
 
       # THE GATE. Anything CRITICAL with a fix available stops the pipeline.
+      #
+      # It reports each blocking finding as a GitHub annotation — the package,
+      # the version installed, and the version that fixes it — so whoever hits
+      # this knows exactly what to bump without opening the raw log.
       - name: Gate — fail on fixable CRITICAL findings
         run: |
           set -euo pipefail
@@ -308,9 +312,11 @@ jobs:
             --scanners vuln,secret \
             --severity CRITICAL \
             --ignore-unfixed \
+            --format json \
             --no-progress \
-            --exit-code 1
-          echo "OK: no fixable CRITICAL vulnerabilities or exposed secrets."
+            --output gate-fs.json \
+            --exit-code 0
+          node .github/scripts/trivy-gate.mjs gate-fs.json "filesystem"
 
   # ───────────────────────────────────────────────────────────────────────────
   # 5. DOCKER IMAGE BUILD + IMAGE SCAN (DevSecOps gate #2)
@@ -424,16 +430,19 @@ jobs:
       - name: Gate — fail on fixable CRITICAL findings in either image
         run: |
           set -euo pipefail
-          for img in nextstep-backend:ci nextstep-frontend:ci; do
-            echo "Gating $img …"
-            trivy image "$img" \
+          FAILED=0
+          for svc in backend frontend; do
+            trivy image "nextstep-$svc:ci" \
               --scanners vuln \
               --severity CRITICAL \
               --ignore-unfixed \
+              --format json \
               --no-progress \
-              --exit-code 1
+              --output "gate-$svc.json" \
+              --exit-code 0
+            node .github/scripts/trivy-gate.mjs "gate-$svc.json" "$svc image" || FAILED=1
           done
-          echo "OK: no fixable CRITICAL vulnerabilities in either image."
+          exit $FAILED
 
       - name: Image scan summary
         if: always()
