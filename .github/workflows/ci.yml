@@ -368,6 +368,82 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
 
+      # ─────────────────────────────────────────────────────────────────────
+      # SMOKE TEST — do the images we just built actually RUN?
+      #
+      # Building an image only proves it compiles. On 2 Aug 2026 a backend
+      # image that built perfectly crash-looped in the cluster (a malformed
+      # DATABASE_URL) because nothing between `docker build` and production
+      # ever started the container. This step closes that gap: both images
+      # are booted for real and must answer on their port, or CI fails.
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Smoke test — both images boot and answer
+        run: |
+          set -euo pipefail
+
+          # A private network + throwaway Postgres, so the API has a database
+          # to reach without touching the team's shared Supabase.
+          docker network create smoke-net
+          docker run -d --name smoke-db --network smoke-net \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=smoke \
+            postgres:16-alpine
+
+          echo "Waiting for the smoke-test database..."
+          for i in $(seq 1 20); do
+            if docker exec smoke-db pg_isready -U postgres >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+
+          # ---- backend ----
+          docker run -d --name smoke-api --network smoke-net -p 4000:4000 \
+            -e DATABASE_URL="postgresql://postgres:postgres@smoke-db:5432/smoke" \
+            -e DATABASE_SSL=disable \
+            nextstep-backend:ci
+
+          echo "::group::Backend container — waiting for /api/health"
+          ok=false
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:4000/api/health; then ok=true; break; fi
+            sleep 3
+          done
+          echo "::endgroup::"
+          if [ "$ok" != "true" ]; then
+            echo "::error::The backend image built, but the container never answered /api/health."
+            echo "--- container logs ---"
+            docker logs smoke-api || true
+            exit 1
+          fi
+          echo "Backend image boots and is healthy."
+
+          # ---- frontend ----
+          docker run -d --name smoke-web --network smoke-net -p 3000:3000 \
+            nextstep-frontend:ci
+
+          echo "::group::Frontend container — waiting for the home page"
+          ok=false
+          for i in $(seq 1 20); do
+            if curl -fsS -o /dev/null http://localhost:3000; then ok=true; break; fi
+            sleep 3
+          done
+          echo "::endgroup::"
+          if [ "$ok" != "true" ]; then
+            echo "::error::The frontend image built, but the container never served a page."
+            echo "--- container logs ---"
+            docker logs smoke-web || true
+            exit 1
+          fi
+          echo "Frontend image boots and serves."
+
+      # Always clean up, even if the smoke test failed, so the runner doesn't
+      # leak containers into later steps.
+      - name: Tear down the smoke-test containers
+        if: always()
+        run: |
+          docker rm -f smoke-api smoke-web smoke-db >/dev/null 2>&1 || true
+          docker network rm smoke-net >/dev/null 2>&1 || true
+
       - name: Install Trivy
         run: |
           set -euo pipefail

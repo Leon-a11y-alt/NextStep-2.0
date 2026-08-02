@@ -468,8 +468,12 @@ jobs:
               backend=ghcr.io/$REPO/backend:${GITHUB_SHA}
             sudo kubectl set image deployment/frontend \
               frontend=ghcr.io/$REPO/frontend:${GITHUB_SHA}
-            sudo kubectl rollout status deployment/backend  --timeout=180s
-            sudo kubectl rollout status deployment/frontend --timeout=180s
+            # 300s, not 180s: on a single-node cluster a cold image pull plus
+            # the readiness probe's initial delay can legitimately take a few
+            # minutes, and a timeout here fails the release even though the
+            # rollout would have finished.
+            sudo kubectl rollout status deployment/backend  --timeout=300s
+            sudo kubectl rollout status deployment/frontend --timeout=300s
             sudo kubectl get pods -o wide
           EOF
 
