@@ -41,6 +41,13 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
   ci:
     name: CI gate
+    # A called workflow may only use permissions its caller grants. The Trivy
+    # jobs inside ci.yml upload SARIF to the Security tab, which needs
+    # security-events: write — without this grant here, GitHub refuses the
+    # whole CD run at startup ("workflow file issue").
+    permissions:
+      contents: read
+      security-events: write
     uses: ./.github/workflows/ci.yml
 
   # ───────────────────────────────────────────────────────────────────────────
