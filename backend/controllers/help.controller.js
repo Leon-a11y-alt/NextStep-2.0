@@ -309,10 +309,10 @@ async function askGemini(query, courses, lean, tell) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
 
-  // flash-latest, not flash-lite-latest: on the free tier the lite model was
-  // measured returning 503 "high demand" or simply never replying, while this
-  // one answered every time in about two seconds.
-  const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
+  // Measured against the real catalogue-sized prompt, flash-lite answers in
+  // about a second where plain flash returns 503 "high demand". Free-tier
+  // capacity moves around, so GEMINI_MODEL overrides this without a rebuild.
+  const model = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), GEMINI_TIMEOUT_MS);
   try {
