@@ -198,6 +198,13 @@ function toResult(s, bestScore, nothingMatched) {
 // given question ever waits. Override with N8N_TIMEOUT_MS in .env.
 const AI_TIMEOUT_MS = Number(process.env.N8N_TIMEOUT_MS) || 25000;
 
+// Gemini gets a much shorter leash than the n8n path above. Measured, it either
+// answers in about a second or it is having a bad day (503 "high demand", or the
+// request never comes back at all). Waiting the full n8n budget for that just
+// leaves the student watching a spinner before we fall back to keyword matching
+// anyway — so fail fast and give them an instant answer instead.
+const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 12000;
+
 // Pull a JSON array out of one string, ignoring ```json fences and any chatter
 // the model wrapped around it.
 function arrayFromString(value) {
@@ -304,7 +311,7 @@ async function askGemini(query, courses, lean, tell) {
 
   const model = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
   const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), AI_TIMEOUT_MS);
+  const timer = setTimeout(() => abort.abort(), GEMINI_TIMEOUT_MS);
   try {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
@@ -336,7 +343,7 @@ async function askGemini(query, courses, lean, tell) {
     }
     return results;
   } catch (err) {
-    const why = err.name === "AbortError" ? `no reply in ${AI_TIMEOUT_MS}ms` : err.message;
+    const why = err.name === "AbortError" ? `no reply in ${GEMINI_TIMEOUT_MS}ms` : err.message;
     tell(`Gemini unavailable (${why})`);
     return null;
   } finally {
