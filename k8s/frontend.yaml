@@ -1,11 +1,13 @@
 # frontend.yaml — NextStep frontend (Next.js standalone)
-# Deploys the frontend image from GHCR and exposes it via NodePort 30080.
+# Deploys the frontend image from GHCR. Traffic normally arrives through the
+# Ingress (see ingress.yaml), which is the single public entry point on port
+# 80; the NodePort below is kept as a direct-to-service fallback for debugging.
 #
 # NOTE: the backend API URL (NEXT_PUBLIC_API_URL) is baked into the image
-# at BUILD time, not read at runtime. The image currently deployed was built
-# with NEXT_PUBLIC_API_URL=http://34.124.158.162:30081 so the browser can
-# reach the backend. If the backend IP/port changes, the frontend image must
-# be rebuilt and pushed again — it can't be fixed by editing this manifest.
+# at BUILD time, not read at runtime. It is set from the repo variable of the
+# same name (currently http://34.124.158.162 — no port, because the Ingress
+# routes /api to the backend on port 80). If that address changes, the frontend
+# image must be rebuilt and pushed — it can't be fixed by editing this manifest.
 
 apiVersion: apps/v1
 kind: Deployment
@@ -33,16 +35,26 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+          readinessProbe:            # don't send traffic until the page actually serves
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+          livenessProbe:             # restart the pod if it stops responding
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 15
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: frontend
 spec:
-  type: NodePort                     # exposes the frontend outside the cluster
+  type: NodePort                     # reachable directly, but the Ingress is the front door
   selector:
     app: frontend
   ports:
     - port: 3000
       targetPort: 3000
-      nodePort: 30080                # the public entry point: http://<VM-public-IP>:30080
+      nodePort: 30080                # debug path: http://<VM-public-IP>:30080
