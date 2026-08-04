@@ -146,9 +146,9 @@ export default function HelpPage() {
           </Button>
         </form>
         <p className="small muted mt-8" style={{ marginBottom: 0 }}>
-          Searches the Cisco Networking Academy catalogue used by RP, matching your words
-          against each module&rsquo;s keywords. When the n8n workflow is connected it ranks the
-          modules instead.
+          Google Gemini ranks the Cisco Networking Academy catalogue used by RP against what
+          you asked. If it&rsquo;s ever unavailable, this falls back to matching your words
+          against each module&rsquo;s keywords instead.
         </p>
       </Card>
 
