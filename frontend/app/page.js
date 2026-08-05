@@ -26,7 +26,7 @@ export default function LandingPage() {
       {/* Hero */}
       <section className="container" style={{ padding: "72px 24px 40px", textAlign: "center" }}>
         <span className="badge badge-blue mb-16" style={{ margin: "0 auto 16px" }}>
-          For Republic Polytechnic students
+          For Polytechnic students
         </span>
         <h1 style={{ fontSize: 46, fontWeight: 800, lineHeight: 1.1, maxWidth: 760, margin: "0 auto", letterSpacing: "-0.02em" }}>
           Turn student advice into <span style={{ color: "var(--primary)" }}>real action plans</span>.
