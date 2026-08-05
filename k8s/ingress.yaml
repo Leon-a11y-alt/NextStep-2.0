@@ -22,7 +22,7 @@
 #   The NodePort Services are deliberately left in place, so the old
 #   :30080 / :30081 URLs keep working as a fallback.
 #
-# Done by Khaing Khant Zaw (Deployment / CD).
+# Done by Andrea (kubernetes).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
